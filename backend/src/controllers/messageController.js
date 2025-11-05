@@ -241,11 +241,21 @@ export const getMessagesByCategory = async (req, res) => {
   const { userId } = req;
   const { category } = req.params;
 
+  // Handle starred messages as a special category
+  if (category === 'starred') {
+    const messages = await firestoreHelpers.getStarredMessages(userId);
+    return res.json({
+      messages,
+      count: messages.length,
+      category: 'starred',
+    });
+  }
+
   const validCategories = ['docs', 'images', 'videos', 'others'];
   if (!validCategories.includes(category)) {
     return res.status(400).json({
       error: 'Invalid category',
-      validCategories,
+      validCategories: [...validCategories, 'starred'],
     });
   }
 

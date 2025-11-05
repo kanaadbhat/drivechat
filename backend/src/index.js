@@ -8,11 +8,12 @@ import morgan from 'morgan';
 dotenv.config();
 
 // Import routes
-import authRoutes from './routes/auth.js';
 import messageRoutes from './routes/messages.js';
 import fileRoutes from './routes/files.js';
 import userRoutes from './routes/users.js';
 import adminRoutes from './routes/admin.js';
+import authRoutes from './routes/auth.js';
+import oauthRoutes from './routes/oauth.js';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler.js';
@@ -45,11 +46,12 @@ app.get('/health', (req, res) => {
 });
 
 // API Routes
-app.use('/api/auth', authRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/oauth', oauthRoutes);
 
 // 404 handler
 app.use((req, res) => {

@@ -134,6 +134,17 @@ export const firestoreHelpers = {
     return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
   },
 
+  // Get starred messages
+  async getStarredMessages(uid) {
+    const messagesRef = db.collection('users').doc(uid).collection('messages');
+    const snapshot = await messagesRef
+      .where('starred', '==', true)
+      .orderBy('timestamp', 'desc')
+      .get();
+
+    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  },
+
   // Update user analytics
   async updateUserAnalytics(uid, updates) {
     const userRef = db.collection('users').doc(uid);

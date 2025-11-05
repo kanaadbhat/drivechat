@@ -5,11 +5,15 @@ import * as fileController from '../controllers/fileController.js';
 
 const router = express.Router();
 
-// All file routes require authentication
+// All routes require authentication
 router.use(requireAuth);
 
 // Upload file to Google Drive
-router.post('/upload', asyncHandler(fileController.uploadFile));
+router.post(
+  '/upload',
+  fileController.fileUploadMiddleware,
+  asyncHandler(fileController.uploadFile)
+);
 
 // Get file metadata from Drive
 router.get('/:fileId', asyncHandler(fileController.getFileMetadata));

@@ -1,3 +1,12 @@
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { ClerkProvider } from '@clerk/clerk-react';
+import LandingPage from './components/LandingPage';
+import SignInPage from './components/SignInPage';
+import ChatInterface from './components/ChatInterface';
+import StarredMessages from './components/StarredMessages';
+import SettingsPage from './components/SettingsPage';
+import ProtectedRoute from './components/ProtectedRoute';
+
 const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 function App() {

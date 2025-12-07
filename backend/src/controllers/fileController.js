@@ -11,7 +11,7 @@ const db = admin.firestore();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB limit
+    fileSize: 100 * 1024 * 1024,
   },
 });
 
@@ -113,7 +113,7 @@ export const uploadFile = async (req, res) => {
     const driveFile = await drive.files.create({
       requestBody: fileMetadata,
       media: media,
-      fields: 'id, name, mimeType, size, webViewLink, webContentLink',
+      fields: 'id, name, mimeType, size, webViewLink, webContentLink, thumbnailLink',
     });
 
     // Make file accessible with link
@@ -140,6 +140,7 @@ export const uploadFile = async (req, res) => {
       fileCategory,
       webViewLink: driveFile.data.webViewLink,
       webContentLink: driveFile.data.webContentLink,
+      thumbnailLink: driveFile.data.thumbnailLink,
       message: 'File uploaded to Google Drive successfully',
     });
   } catch (error) {
@@ -424,13 +425,24 @@ export const deleteFile = async (req, res) => {
 export const getFilePreview = async (req, res) => {
   try {
     const { fileId } = req.params;
-    const { accessToken, refreshToken } = req.query;
+    const { userId } = req;
 
-    if (!accessToken) {
-      return res.status(400).json({
-        error: 'Access token is required',
+    // Get stored Google OAuth tokens from Firestore
+    const tokenDoc = await db
+      .collection('users')
+      .doc(userId)
+      .collection('oauth')
+      .doc('google')
+      .get();
+
+    if (!tokenDoc.exists) {
+      return res.status(401).json({
+        error: 'Google account not connected',
       });
     }
+
+    const tokenData = tokenDoc.data();
+    const { accessToken, refreshToken } = tokenData;
 
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
@@ -445,17 +457,84 @@ export const getFilePreview = async (req, res) => {
 
     const file = await drive.files.get({
       fileId,
-      fields: 'thumbnailLink, webViewLink',
+      fields: 'thumbnailLink, webViewLink, webContentLink, mimeType',
     });
 
     res.json({
       thumbnailLink: file.data.thumbnailLink,
       webViewLink: file.data.webViewLink,
+      webContentLink: file.data.webContentLink,
+      mimeType: file.data.mimeType,
     });
   } catch (error) {
     console.error('Get file preview error:', error);
     res.status(500).json({
       error: 'Failed to get file preview',
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * Proxy file content from Google Drive (for direct preview)
+ */
+export const proxyFileContent = async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    const { userId } = req;
+
+    // Get stored Google OAuth tokens from Firestore
+    const tokenDoc = await db
+      .collection('users')
+      .doc(userId)
+      .collection('oauth')
+      .doc('google')
+      .get();
+
+    if (!tokenDoc.exists) {
+      return res.status(401).json({
+        error: 'Google account not connected',
+      });
+    }
+
+    const tokenData = tokenDoc.data();
+    const { accessToken, refreshToken } = tokenData;
+
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+    oauth2Client.setCredentials({
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    });
+
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+    // Get file metadata first
+    const fileMeta = await drive.files.get({
+      fileId,
+      fields: 'name, mimeType, size',
+    });
+
+    // Stream the file content
+    const response = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+
+    // Set appropriate headers
+    res.setHeader('Content-Type', fileMeta.data.mimeType);
+    res.setHeader('Content-Disposition', `inline; filename="${fileMeta.data.name}"`);
+    res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+
+    if (fileMeta.data.size) {
+      res.setHeader('Content-Length', fileMeta.data.size);
+    }
+
+    // Pipe the file stream to response
+    response.data.pipe(res);
+  } catch (error) {
+    console.error('File proxy error:', error);
+    res.status(500).json({
+      error: 'Failed to proxy file',
       message: error.message,
     });
   }

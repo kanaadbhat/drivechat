@@ -37,9 +37,8 @@ export const getFileCategory = (mimeType) => {
     return 'videos';
   }
 
-  // Audio (could be added as a separate category if needed)
   if (type.startsWith('audio/')) {
-    return 'others'; // or create 'audio' category
+    return 'audio';
   }
 
   return 'others';

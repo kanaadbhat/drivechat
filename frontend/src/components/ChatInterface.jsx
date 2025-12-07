@@ -11,8 +11,14 @@ import {
   StarOff,
   Image as ImageIcon,
   File,
+  FileText,
   Trash2,
   Search,
+  Send,
+  Filter,
+  Edit,
+  Copy,
+  Eye,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -35,7 +41,13 @@ export default function ChatInterface() {
   const [showSidebar, setShowSidebar] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
+  const [showStarredOnly, setShowStarredOnly] = useState(false);
   const [googleConnected, setGoogleConnected] = useState(false);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [editingMessage, setEditingMessage] = useState(null);
+  const [editText, setEditText] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [authenticatedUrls, setAuthenticatedUrls] = useState({});
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -50,16 +62,50 @@ export default function ChatInterface() {
       if (!token) return;
 
       let url = `${API_URL}/api/messages`;
-      if (searchQuery.trim()) {
+
+      // If showing starred only, fetch from starred endpoint
+      if (showStarredOnly) {
+        url = `${API_URL}/api/messages/category/starred`;
+        console.log('Fetching starred messages from:', url);
+      } else if (searchQuery.trim()) {
         url = `${API_URL}/api/messages/search?q=${encodeURIComponent(searchQuery)}`;
+        console.log('Searching messages:', searchQuery);
       }
 
       const response = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      setMessages(response.data.messages || []);
+
+      console.log('Received messages:', response.data.messages?.length, 'messages');
+
+      // Reverse the order so newest messages appear at the bottom
+      const sortedMessages = (response.data.messages || []).sort(
+        (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+      );
+
+      setMessages(sortedMessages);
     } catch (error) {
       console.error('Error fetching messages:', error);
+      // If starred filter fails, try client-side filtering instead
+      if (showStarredOnly && error.response?.status === 500) {
+        console.log('Falling back to client-side starred filtering');
+        try {
+          const token = await getToken();
+          if (!token) return;
+
+          const response = await axios.get(`${API_URL}/api/messages`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const allMessages = response.data.messages || [];
+          const starredMessages = allMessages.filter((msg) => msg.starred === true);
+          const sortedMessages = starredMessages.sort(
+            (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
+          );
+          setMessages(sortedMessages);
+        } catch (fallbackError) {
+          console.error('Fallback also failed:', fallbackError);
+        }
+      }
     }
   };
 
@@ -132,14 +178,17 @@ export default function ChatInterface() {
       await fetchMessages();
     };
     fetch();
-  }, [searchQuery]);
+  }, [searchQuery, showStarredOnly]);
 
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!searchQuery) fetchMessages();
+      // Only auto-refresh if: not searching, not filtering starred, and document is visible
+      if (!searchQuery && !showStarredOnly && document.visibilityState === 'visible') {
+        fetchMessages();
+      }
     }, 5000);
     return () => clearInterval(interval);
-  }, [searchQuery]);
+  }, [searchQuery, showStarredOnly]);
 
   useEffect(() => {
     const check = async () => {
@@ -154,11 +203,15 @@ export default function ChatInterface() {
 
   const sendMessage = async () => {
     if (!inputMessage.trim() && !selectedFile) return;
+    if (isSending) return; // Prevent double-sending
+
+    setIsSending(true);
 
     try {
       const token = await getToken();
       if (!token) {
         alert('Authentication required');
+        setIsSending(false);
         return;
       }
 
@@ -177,6 +230,7 @@ export default function ChatInterface() {
       let mimeType = null;
       let fileCategory = null;
       let webViewLink = null;
+      let webContentLink = null;
 
       if (selectedFile) {
         try {
@@ -187,6 +241,7 @@ export default function ChatInterface() {
             alert(
               'Please connect Google Drive first.\n\nClick the "Connect Google Drive" button in the sidebar.'
             );
+            setIsSending(false);
             return;
           }
 
@@ -206,11 +261,13 @@ export default function ChatInterface() {
           mimeType = fileResponse.data.mimeType;
           fileCategory = fileResponse.data.fileCategory;
           webViewLink = fileResponse.data.webViewLink;
+          webContentLink = fileResponse.data.webContentLink;
         } catch (uploadError) {
           console.error('File upload failed:', uploadError);
           alert(
             `File upload failed: ${uploadError.response?.data?.message || uploadError.message}`
           );
+          setIsSending(false);
           return;
         }
       }
@@ -245,7 +302,7 @@ export default function ChatInterface() {
             fileSize,
             mimeType,
             fileCategory,
-            filePreviewUrl: webViewLink,
+            filePreviewUrl: webContentLink || webViewLink,
             deviceId,
             deviceName,
           },
@@ -264,6 +321,8 @@ export default function ChatInterface() {
     } catch (error) {
       console.error('Error sending message:', error);
       alert(`Failed to send message: ${error.response?.data?.message || error.message}`);
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -288,30 +347,31 @@ export default function ChatInterface() {
     try {
       const token = await getToken();
       if (!token) return;
-      if (isStarred) {
-        await axios.patch(
-          `${API_URL}/api/messages/${messageId}`,
-          {
-            starred: false,
-          },
-          {
-            headers: { Authorization: `Bearer ${token}` },
-          }
-        );
-      } else {
-        await axios.patch(
-          `${API_URL}/api/messages/${messageId}`,
-          {
-            starred: true,
-          },
-          {
-            headers: { Authorization: `Bearer ${token}` },
-          }
-        );
-      }
-      fetchMessages();
+
+      console.log(
+        'Toggling star:',
+        messageId,
+        'Current starred:',
+        isStarred,
+        'New starred:',
+        !isStarred
+      );
+
+      await axios.patch(
+        `${API_URL}/api/messages/${messageId}`,
+        {
+          starred: !isStarred,
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      // Refetch messages to update the UI
+      await fetchMessages();
     } catch (error) {
       console.error('Error toggling star:', error);
+      alert('Failed to toggle star');
     }
   };
 
@@ -335,6 +395,211 @@ export default function ChatInterface() {
     }
     return <FileText className="w-4 h-4" />;
   };
+
+  const handleContextMenu = (e, message) => {
+    e.preventDefault();
+
+    // Calculate position with boundary checks
+    const menuWidth = 200; // Approximate context menu width
+    const menuHeight = 200; // Approximate context menu height
+    const padding = 10;
+
+    let x = e.clientX;
+    let y = e.clientY;
+
+    // Adjust if too close to right edge
+    if (x + menuWidth > window.innerWidth) {
+      x = window.innerWidth - menuWidth - padding;
+    }
+
+    // Adjust if too close to bottom edge
+    if (y + menuHeight > window.innerHeight) {
+      y = window.innerHeight - menuHeight - padding;
+    }
+
+    // Ensure not too close to left/top edges
+    x = Math.max(padding, x);
+    y = Math.max(padding, y);
+
+    setContextMenu({
+      x,
+      y,
+      message,
+    });
+  };
+
+  const closeContextMenu = () => {
+    setContextMenu(null);
+  };
+
+  // Get direct preview URL for Google Drive files via backend proxy
+  const getPreviewUrl = (fileId, mimeType) => {
+    if (!fileId) return null;
+
+    // Use backend proxy for all media files to handle authentication
+    if (
+      mimeType?.startsWith('image/') ||
+      mimeType?.startsWith('video/') ||
+      mimeType?.startsWith('audio/')
+    ) {
+      return `${API_URL}/api/files/${fileId}/content`;
+    }
+
+    // For PDFs, we can't use iframe with Google Drive due to CORS
+    // So we'll download it or show a link instead
+    if (mimeType === 'application/pdf') {
+      return `${API_URL}/api/files/${fileId}/content`;
+    }
+
+    return null;
+  };
+
+  const getDownloadUrl = (fileId) => {
+    if (!fileId) return null;
+    return `${API_URL}/api/files/${fileId}/content`;
+  };
+
+  const handleDownloadFile = async (message) => {
+    if (!message.fileId) return;
+
+    try {
+      const token = await getToken();
+      const downloadUrl = `${API_URL}/api/files/${message.fileId}/content`;
+
+      // Fetch with auth token
+      const response = await fetch(downloadUrl, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) throw new Error('Download failed');
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = message.fileName || 'download';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Download error:', error);
+      alert('Failed to download file');
+    }
+
+    closeContextMenu();
+  };
+
+  // Get authenticated URL with token for media
+  const getAuthenticatedUrl = async (fileId) => {
+    // Check if we already have the URL cached
+    if (authenticatedUrls[fileId]) {
+      return authenticatedUrls[fileId];
+    }
+
+    try {
+      const token = await getToken();
+      if (!token) {
+        console.error('No token available for authenticated URL');
+        return null;
+      }
+
+      const url = `${API_URL}/api/files/${fileId}/content?token=${encodeURIComponent(token)}`;
+
+      // Cache the URL
+      setAuthenticatedUrls((prev) => ({ ...prev, [fileId]: url }));
+
+      return url;
+    } catch (error) {
+      console.error('Error getting authenticated URL:', error);
+      return null;
+    }
+  };
+
+  // Generate authenticated URLs for all file messages when messages change
+  useEffect(() => {
+    const generateUrls = async () => {
+      const fileMessages = messages.filter((m) => m.type === 'file' && m.fileId);
+      if (fileMessages.length === 0) return;
+
+      console.log('Generating authenticated URLs for', fileMessages.length, 'file messages');
+      console.log(
+        'File messages:',
+        fileMessages.map((m) => ({ id: m.fileId, type: m.mimeType, name: m.fileName }))
+      );
+
+      for (const msg of fileMessages) {
+        if (!authenticatedUrls[msg.fileId]) {
+          const url = await getAuthenticatedUrl(msg.fileId);
+          if (url) {
+            console.log('Generated URL for file:', msg.fileId, '→', url);
+          } else {
+            console.error('Failed to generate URL for file:', msg.fileId);
+          }
+        } else {
+          console.log('URL already cached for:', msg.fileId);
+        }
+      }
+
+      console.log('Current authenticatedUrls state:', authenticatedUrls);
+    };
+
+    if (messages.length > 0) {
+      generateUrls();
+    }
+  }, [messages]);
+
+  const handleEditMessage = async () => {
+    if (!editText.trim() || !editingMessage) return;
+
+    try {
+      const token = await getToken();
+      if (!token) return;
+
+      await axios.patch(
+        `${API_URL}/api/messages/${editingMessage}`,
+        { text: editText.trim() },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      setEditingMessage(null);
+      setEditText('');
+      fetchMessages();
+    } catch (error) {
+      console.error('Error editing message:', error);
+      alert('Failed to edit message');
+    }
+  };
+
+  const handleCopyMessage = (message) => {
+    const textToCopy = message.type === 'text' ? message.text : message.fileName;
+    navigator.clipboard.writeText(textToCopy || '');
+    closeContextMenu();
+  };
+
+  const handleViewFile = (message) => {
+    if (message.filePreviewUrl) {
+      window.open(message.filePreviewUrl, '_blank');
+    }
+    closeContextMenu();
+  };
+
+  const startEdit = (message) => {
+    setEditingMessage(message.id);
+    setEditText(message.text || '');
+    closeContextMenu();
+  };
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    const handleClick = () => closeContextMenu();
+    if (contextMenu) {
+      document.addEventListener('click', handleClick);
+      return () => document.removeEventListener('click', handleClick);
+    }
+  }, [contextMenu]);
 
   return (
     <div className="h-screen bg-gray-950 flex overflow-hidden">
@@ -454,34 +719,77 @@ export default function ChatInterface() {
       <div className="flex-1 flex flex-col h-full">
         {/* Chat Header */}
         <div className="bg-gray-900 border-b border-gray-800 p-4">
-          <div className="flex items-center gap-3 mb-3">
+          <div className="flex items-center gap-3">
             <button
               onClick={() => setShowSidebar(true)}
               className="lg:hidden text-gray-400 hover:text-white"
             >
               <Menu className="w-6 h-6" />
             </button>
-            <h2 className="text-white font-semibold flex-1">Messages</h2>
-            <button
-              onClick={() => setShowSearch(!showSearch)}
-              className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
-            >
-              <Search className="w-5 h-5" />
-            </button>
-            <div className="flex items-center gap-2 text-sm text-gray-400">
-              <Clock className="w-4 h-4" />
-              <span>Auto-delete: 24 hours</span>
+
+            {/* Animated Header Title */}
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <div className="w-8 h-8 bg-linear-to-br from-blue-500 via-purple-500 to-pink-500 rounded-lg flex items-center justify-center shadow-lg shrink-0">
+                <span className="text-lg">💬</span>
+              </div>
+              {!showSearch ? (
+                <div className="flex flex-col min-w-0 flex-1">
+                  <h2 className="font-bold text-lg bg-linear-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent truncate">
+                    DriveChat
+                  </h2>
+                  <p className="text-xs text-gray-400 truncate">
+                    {showStarredOnly ? 'Starred Messages' : `${messages.length} messages`}
+                  </p>
+                </div>
+              ) : (
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search..."
+                  className="flex-1 px-3 py-1.5 bg-gray-800 text-white text-sm rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none min-w-0"
+                  autoFocus
+                />
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setShowStarredOnly(!showStarredOnly);
+                  if (!showStarredOnly) {
+                    // When enabling starred filter, clear search
+                    setShowSearch(false);
+                    setSearchQuery('');
+                  }
+                }}
+                className={`p-2 ${
+                  showStarredOnly
+                    ? 'text-yellow-400 bg-yellow-400/10'
+                    : 'text-gray-400 hover:bg-gray-800'
+                } hover:text-yellow-300 rounded-lg transition-colors`}
+                title={showStarredOnly ? 'Show all messages' : 'Show only starred messages'}
+              >
+                <Filter className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => {
+                  setShowSearch(!showSearch);
+                  if (!showSearch) setSearchQuery('');
+                }}
+                className={`p-2 ${
+                  showSearch ? 'text-blue-400 bg-blue-400/10' : 'text-gray-400 hover:bg-gray-800'
+                } hover:text-blue-300 rounded-lg transition-colors`}
+              >
+                <Search className="w-5 h-5" />
+              </button>
+              <div className="hidden md:flex items-center gap-2 text-sm text-gray-400 px-3 py-1.5 bg-gray-800/50 rounded-lg">
+                <Clock className="w-4 h-4" />
+                <span>24h</span>
+              </div>
             </div>
           </div>
-          {showSearch && (
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search messages..."
-              className="w-full px-4 py-2 bg-gray-800 text-white rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none text-sm"
-            />
-          )}
         </div>
 
         {/* Messages Area */}
@@ -489,14 +797,21 @@ export default function ChatInterface() {
           {messages.length === 0 ? (
             <div className="flex items-center justify-center h-full text-gray-500">
               <div className="text-center">
-                <p className="text-lg mb-2">No messages yet</p>
-                <p className="text-sm">Send your first message below</p>
+                <p className="text-lg mb-2">
+                  {showStarredOnly ? 'No starred messages' : 'No messages yet'}
+                </p>
+                <p className="text-sm">
+                  {showStarredOnly
+                    ? 'Star messages to see them here'
+                    : 'Send your first message below'}
+                </p>
               </div>
             </div>
           ) : (
             messages.map((message) => {
               // Check if the message belongs to the current user
               const isSentByMe = message.sender?.deviceId === localStorage.getItem('deviceId');
+              const isEditing = editingMessage === message.id;
 
               return (
                 <div
@@ -506,13 +821,154 @@ export default function ChatInterface() {
                   <div
                     className={`max-w-md px-4 py-3 rounded-lg ${
                       isSentByMe ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-100'
-                    }`}
+                    } relative group`}
+                    onContextMenu={(e) => handleContextMenu(e, message)}
                   >
                     {message.type === 'text' && message.text && (
-                      <p className="wrap-break-word">{message.text}</p>
+                      <>
+                        {isEditing ? (
+                          <div className="space-y-2">
+                            <input
+                              type="text"
+                              value={editText}
+                              onChange={(e) => setEditText(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleEditMessage();
+                                if (e.key === 'Escape') {
+                                  setEditingMessage(null);
+                                  setEditText('');
+                                }
+                              }}
+                              className="w-full px-2 py-1 bg-gray-700 text-white rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+                              autoFocus
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                onClick={handleEditMessage}
+                                className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded"
+                              >
+                                Save
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setEditingMessage(null);
+                                  setEditText('');
+                                }}
+                                className="px-2 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="wrap-break-word">
+                            {message.text}
+                            {message.edited && (
+                              <span className="text-xs opacity-60 ml-2">(edited)</span>
+                            )}
+                          </p>
+                        )}
+                      </>
                     )}
                     {message.type === 'file' && message.fileName && (
-                      <div className="flex flex-col gap-2">
+                      <div
+                        className="flex flex-col gap-2"
+                        onDoubleClick={() =>
+                          message.fileId &&
+                          window.open(
+                            `https://drive.google.com/file/d/${message.fileId}/view`,
+                            '_blank'
+                          )
+                        }
+                      >
+                        {/* Image preview */}
+                        {message.mimeType?.startsWith('image/') && message.fileId && (
+                          <>
+                            {authenticatedUrls[message.fileId] ? (
+                              <img
+                                src={authenticatedUrls[message.fileId]}
+                                alt={message.fileName}
+                                className="max-w-xs max-h-64 rounded cursor-pointer object-cover"
+                                onClick={() =>
+                                  window.open(
+                                    `https://drive.google.com/file/d/${message.fileId}/view`,
+                                    '_blank'
+                                  )
+                                }
+                                onError={(e) => {
+                                  console.error('Image load error for', message.fileId);
+                                  e.target.style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              <div className="flex items-center justify-center w-32 h-32 bg-gray-700 rounded">
+                                <span className="text-gray-400 text-xs">Loading...</span>
+                              </div>
+                            )}
+                          </>
+                        )}
+                        {/* Video preview with controls */}
+                        {message.mimeType?.startsWith('video/') && message.fileId && (
+                          <>
+                            {authenticatedUrls[message.fileId] ? (
+                              <video
+                                controls
+                                controlsList="nodownload"
+                                className="max-w-xs max-h-64 rounded"
+                                onError={(e) => {
+                                  console.error('Video load error for', message.fileId);
+                                  e.target.style.display = 'none';
+                                }}
+                              >
+                                <source
+                                  src={authenticatedUrls[message.fileId]}
+                                  type={message.mimeType}
+                                />
+                                Your browser does not support the video tag.
+                              </video>
+                            ) : (
+                              <div className="flex items-center justify-center w-64 h-48 bg-gray-700 rounded">
+                                <span className="text-gray-400 text-xs">Loading video...</span>
+                              </div>
+                            )}
+                          </>
+                        )}
+                        {/* Audio preview with controls */}
+                        {message.mimeType?.startsWith('audio/') && message.fileId && (
+                          <>
+                            {authenticatedUrls[message.fileId] ? (
+                              <audio controls className="w-full max-w-xs">
+                                <source
+                                  src={authenticatedUrls[message.fileId]}
+                                  type={message.mimeType}
+                                />
+                                Your browser does not support the audio tag.
+                              </audio>
+                            ) : (
+                              <div className="flex items-center justify-center w-64 h-12 bg-gray-700 rounded">
+                                <span className="text-gray-400 text-xs">Loading audio...</span>
+                              </div>
+                            )}
+                          </>
+                        )}
+                        {/* PDF preview - show link instead of iframe due to CORS */}
+                        {message.mimeType === 'application/pdf' && message.fileId && (
+                          <div className="px-4 py-3 bg-gray-700/50 rounded">
+                            <p className="text-sm text-gray-300 mb-2">PDF Document</p>
+                            <button
+                              onClick={() =>
+                                window.open(
+                                  `https://drive.google.com/file/d/${message.fileId}/view`,
+                                  '_blank'
+                                )
+                              }
+                              className="text-sm text-blue-400 hover:text-blue-300 underline"
+                            >
+                              Open in Google Drive
+                            </button>
+                          </div>
+                        )}
+                        {/* File info */}
                         <div className="flex items-center gap-2 text-sm">
                           {getFileIcon(message.fileName)}
                           <span className="truncate font-medium">{message.fileName}</span>
@@ -521,16 +977,6 @@ export default function ChatInterface() {
                           <p className="text-xs opacity-75">
                             {(message.fileSize / 1024).toFixed(2)} KB
                           </p>
-                        )}
-                        {message.filePreviewUrl && (
-                          <a
-                            href={message.filePreviewUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs underline hover:no-underline opacity-90"
-                          >
-                            View in Google Drive
-                          </a>
                         )}
                       </div>
                     )}
@@ -564,6 +1010,79 @@ export default function ChatInterface() {
           )}
           <div ref={messagesEndRef} />
         </div>
+
+        {/* Context Menu */}
+        {contextMenu && (
+          <div
+            className="fixed bg-gray-800 border border-gray-700 rounded-lg shadow-xl py-1 z-50"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            <button
+              onClick={() => {
+                toggleStar(contextMenu.message.id, contextMenu.message.starred);
+                closeContextMenu();
+              }}
+              className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-700 flex items-center gap-2"
+            >
+              {contextMenu.message.starred ? (
+                <>
+                  <StarOff className="w-4 h-4" /> Unstar
+                </>
+              ) : (
+                <>
+                  <Star className="w-4 h-4" /> Star
+                </>
+              )}
+            </button>
+            {contextMenu.message.type === 'text' && (
+              <button
+                onClick={() => startEdit(contextMenu.message)}
+                className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-700 flex items-center gap-2"
+              >
+                <Edit className="w-4 h-4" /> Edit
+              </button>
+            )}
+            <button
+              onClick={() => handleCopyMessage(contextMenu.message)}
+              className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-700 flex items-center gap-2"
+            >
+              <Copy className="w-4 h-4" /> Copy
+            </button>
+            {contextMenu.message.type === 'file' && contextMenu.message.fileId && (
+              <>
+                <button
+                  onClick={() => handleViewFile(contextMenu.message)}
+                  className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-700 flex items-center gap-2"
+                >
+                  <Eye className="w-4 h-4" /> View
+                </button>
+                <button
+                  onClick={() => handleDownloadFile(contextMenu.message)}
+                  className="w-full px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-700 flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                    />
+                  </svg>
+                  Download
+                </button>
+              </>
+            )}
+            <button
+              onClick={() => {
+                deleteMessage(contextMenu.message.id);
+                closeContextMenu();
+              }}
+              className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-gray-700 flex items-center gap-2"
+            >
+              <Trash2 className="w-4 h-4" /> Delete
+            </button>
+          </div>
+        )}
 
         {/* Input Area */}
         <div className="bg-gray-900 border-t border-gray-800 p-4">
@@ -604,10 +1123,14 @@ export default function ChatInterface() {
             />
             <button
               onClick={sendMessage}
-              disabled={!inputMessage.trim() && !selectedFile}
-              className="p-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+              disabled={(!inputMessage.trim() && !selectedFile) || isSending}
+              className="p-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center justify-center"
             >
-              <Send className="w-5 h-5" />
+              {isSending ? (
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Send className="w-5 h-5" />
+              )}
             </button>
           </div>
         </div>

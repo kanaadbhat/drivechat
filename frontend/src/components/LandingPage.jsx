@@ -50,7 +50,7 @@ export default function LandingPage() {
         <div className="w-full max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+              <div className="w-10 h-10 bg-linear-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
                 <MessageSquare className="w-6 h-6" />
               </div>
               <span className="text-2xl font-bold">DriveChat</span>
@@ -66,7 +66,7 @@ export default function LandingPage() {
             ) : (
               <button
                 onClick={() => navigate('/signin')}
-                className="px-6 py-2.5 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40"
+                className="px-6 py-2.5 bg-linear-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40"
               >
                 Sign In
               </button>
@@ -84,7 +84,7 @@ export default function LandingPage() {
               <div className="inline-block px-4 py-2 bg-blue-500/10 border border-blue-500/20 rounded-full text-blue-400 text-sm font-medium mb-6">
                 ✨ Chat with Auto-Delete & Drive Integration
               </div>
-              <h1 className="text-5xl md:text-6xl font-bold mb-6 bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+              <h1 className="text-5xl md:text-6xl font-bold mb-6 bg-linear-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
                 Your Messages, Your Control
               </h1>
               <p className="text-xl text-gray-400 mb-8 max-w-2xl mx-auto">
@@ -95,7 +95,7 @@ export default function LandingPage() {
                 {isSignedIn ? (
                   <button
                     onClick={() => navigate('/chat')}
-                    className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-lg transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-105"
+                    className="px-8 py-4 bg-linear-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-lg transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-105"
                   >
                     Go to Chat
                   </button>
@@ -103,7 +103,7 @@ export default function LandingPage() {
                   <>
                     <button
                       onClick={() => navigate('/signin')}
-                      className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-lg transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-105"
+                      className="px-8 py-4 bg-linear-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-lg transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-105"
                     >
                       Get Started Free
                     </button>
@@ -148,7 +148,7 @@ export default function LandingPage() {
         {/* CTA Section */}
         <section className="w-full py-20">
           <div className="w-full max-w-7xl mx-auto px-4">
-            <div className="max-w-4xl mx-auto bg-gradient-to-r from-blue-500/10 to-purple-500/10 border border-blue-500/20 rounded-2xl p-12 text-center">
+            <div className="max-w-4xl mx-auto bg-linear-to-r from-blue-500/10 to-purple-500/10 border border-blue-500/20 rounded-2xl p-12 text-center">
               <h2 className="text-4xl font-bold mb-4">Ready to get started?</h2>
               <p className="text-gray-400 text-lg mb-8">
                 Join thousands of users who trust DriveChat for secure, temporary messaging.
@@ -156,14 +156,14 @@ export default function LandingPage() {
               {isSignedIn ? (
                 <button
                   onClick={() => navigate('/chat')}
-                  className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-lg transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-105"
+                  className="px-8 py-4 bg-linear-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-lg transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-105"
                 >
                   Go to Chat
                 </button>
               ) : (
                 <button
                   onClick={() => navigate('/signin')}
-                  className="px-8 py-4 bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-lg transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-105"
+                  className="px-8 py-4 bg-linear-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-lg transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-105"
                 >
                   Sign In Now
                 </button>

@@ -4,8 +4,9 @@ import logger from '../utils/logger.js';
 // Queue name
 const QUEUE_NAME = 'ai-operations';
 
-// Create AI operations queue
-export const aiQueue = createQueue(QUEUE_NAME);
+// Queue system is disabled
+// export const aiQueue = createQueue(QUEUE_NAME);
+export const aiQueue = null;
 
 /**
  * Job processor for AI operations
@@ -37,10 +38,11 @@ async function processAIJob(job) {
   }
 }
 
-// Create worker for AI operations queue
-export const aiWorker = createWorker(QUEUE_NAME, processAIJob, {
-  concurrency: 1, // Process AI jobs one at a time (can be expensive)
-});
+// Queue system is disabled
+// export const aiWorker = createWorker(QUEUE_NAME, processAIJob, {
+//   concurrency: 1, // Process AI jobs one at a time (can be expensive)
+// });
+export const aiWorker = null;
 
 /**
  * Queue an AI summarization job

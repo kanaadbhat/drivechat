@@ -19,7 +19,7 @@ import oauthRoutes from './routes/oauth.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 // Import queue system
-import { initializeQueues } from './queues/index.js';
+// import { initializeQueues } from './queues/index.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -61,7 +61,7 @@ app.use((req, res) => {
   });
 });
 
-// Error handler (must be last)
+// Error handler
 app.use(errorHandler);
 
 // Start server
@@ -70,13 +70,13 @@ app.listen(PORT, async () => {
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
 
-  // Initialize queue system
-  try {
-    await initializeQueues();
-  } catch (error) {
-    console.error('Failed to initialize queues:', error);
-    // Don't exit, server can still run without queues
-  }
+  // Queue system temporarily disabled due to Redis connection errors
+  // try {
+  //   await initializeQueues();
+  // } catch (error) {
+  //   console.error('Failed to initialize queues:', error);
+  //   // Don't exit, server can still run without queues
+  // }
 });
 
 // Handle unhandled promise rejections

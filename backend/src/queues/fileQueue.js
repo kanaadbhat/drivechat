@@ -5,8 +5,9 @@ import logger from '../utils/logger.js';
 // Queue name
 const QUEUE_NAME = 'file-operations';
 
-// Create file operations queue
-export const fileQueue = createQueue(QUEUE_NAME);
+// Queue system is disabled
+// export const fileQueue = createQueue(QUEUE_NAME);
+export const fileQueue = null;
 
 /**
  * Job processor for file operations
@@ -42,10 +43,11 @@ async function processFileJob(job) {
   }
 }
 
-// Create worker for file operations queue
-export const fileWorker = createWorker(QUEUE_NAME, processFileJob, {
-  concurrency: 3, // Process 3 file operations at a time
-});
+// Queue system is disabled
+// export const fileWorker = createWorker(QUEUE_NAME, processFileJob, {
+//   concurrency: 3, // Process 3 file operations at a time
+// });
+export const fileWorker = null;
 
 /**
  * Queue a file upload job

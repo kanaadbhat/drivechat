@@ -27,4 +27,19 @@ router.delete('/:fileId', asyncHandler(fileController.deleteFile));
 // Get file preview/thumbnail
 router.get('/:fileId/preview', asyncHandler(fileController.getFilePreview));
 
+// Proxy file content (for images/videos) - supports both header and query param auth
+router.get(
+  '/:fileId/content',
+  asyncHandler(async (req, res, next) => {
+    // Check for token in query param (for <img> and <video> tags)
+    const tokenFromQuery = req.query.token;
+    if (tokenFromQuery && !req.headers.authorization) {
+      req.headers.authorization = `Bearer ${tokenFromQuery}`;
+    }
+    next();
+  }),
+  requireAuth,
+  asyncHandler(fileController.proxyFileContent)
+);
+
 export default router;

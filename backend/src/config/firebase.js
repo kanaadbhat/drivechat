@@ -137,12 +137,29 @@ export const firestoreHelpers = {
   // Get starred messages
   async getStarredMessages(uid) {
     const messagesRef = db.collection('users').doc(uid).collection('messages');
-    const snapshot = await messagesRef
-      .where('starred', '==', true)
-      .orderBy('timestamp', 'desc')
-      .get();
 
-    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    try {
+      // Try to query with orderBy (requires composite index)
+      const snapshot = await messagesRef
+        .where('starred', '==', true)
+        .orderBy('timestamp', 'desc')
+        .get();
+
+      return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    } catch (error) {
+      // If composite index doesn't exist, fetch without orderBy and sort in memory
+      console.log('Composite index not available, falling back to client-side sort');
+      const snapshot = await messagesRef.where('starred', '==', true).get();
+
+      const messages = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
+      // Sort in memory
+      return messages.sort((a, b) => {
+        const dateA = new Date(a.timestamp);
+        const dateB = new Date(b.timestamp);
+        return dateB - dateA; // desc order
+      });
+    }
   },
 
   // Update user analytics

@@ -1,40 +1,34 @@
 // import { triggerImmediateCleanup } from '../queues/cleanupQueue.js';
 // import { cleanupQueue, fileQueue, aiQueue } from '../queues/index.js';
 
+import { asyncHandler } from '../utils/asyncHandler.js';
+
 /**
  * Manually trigger cleanup of expired messages
  */
-
-/**
- * Disabled: Manually trigger cleanup of expired messages
- */
-export const triggerCleanup = async (req, res) => {
+export const triggerCleanup = asyncHandler(async (req, res) => {
   // Queue system is disabled
   res.status(503).json({
     error: 'Queue system is disabled',
     message: 'Manual cleanup is unavailable while queues are disabled.',
   });
-};
+});
 
 /**
  * Get cleanup statistics
  */
-
-/**
- * Disabled: Get cleanup statistics
- */
-export const getCleanupStats = async (req, res) => {
+export const getCleanupStats = asyncHandler(async (req, res) => {
   // Queue system is disabled
   res.status(503).json({
     error: 'Queue system is disabled',
     message: 'Cleanup stats are unavailable while queues are disabled.',
   });
-};
+});
 
 /**
  * Get system statistics
  */
-export const getSystemStats = async (req, res) => {
+export const getSystemStats = asyncHandler(async (req, res) => {
   const { userId } = req;
 
   // Get basic system stats
@@ -52,4 +46,4 @@ export const getSystemStats = async (req, res) => {
   };
 
   res.json({ stats });
-};
+});

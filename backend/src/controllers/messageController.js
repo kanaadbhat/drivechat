@@ -1,11 +1,12 @@
 import { firestoreHelpers, admin } from '../config/firebase.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 // Queue system is disabled for now
 // import { scheduleMessageDeletion, cancelMessageDeletion } from '../queues/cleanupQueue.js';
 
 /**
  * Get all messages for the authenticated user
  */
-export const getMessages = async (req, res) => {
+export const getMessages = asyncHandler(async (req, res) => {
   const { userId } = req;
   const { limit = 100 } = req.query;
 
@@ -15,12 +16,12 @@ export const getMessages = async (req, res) => {
     messages,
     count: messages.length,
   });
-};
+});
 
 /**
  * Get a single message
  */
-export const getMessage = async (req, res) => {
+export const getMessage = asyncHandler(async (req, res) => {
   const { userId } = req;
   const { id } = req.params;
 
@@ -33,12 +34,12 @@ export const getMessage = async (req, res) => {
   }
 
   res.json({ message });
-};
+});
 
 /**
  * Create a new message
  */
-export const createMessage = async (req, res) => {
+export const createMessage = asyncHandler(async (req, res) => {
   const { userId } = req;
   const {
     type,
@@ -121,12 +122,12 @@ export const createMessage = async (req, res) => {
     message,
     success: true,
   });
-};
+});
 
 /**
  * Update a message (star/unstar, edit text)
  */
-export const updateMessage = async (req, res) => {
+export const updateMessage = asyncHandler(async (req, res) => {
   const { userId } = req;
   const { id } = req.params;
   const { starred, text } = req.body;
@@ -181,12 +182,12 @@ export const updateMessage = async (req, res) => {
     message: updatedMessage,
     success: true,
   });
-};
+});
 
 /**
  * Delete a message
  */
-export const deleteMessage = async (req, res) => {
+export const deleteMessage = asyncHandler(async (req, res) => {
   const { userId } = req;
   const { id } = req.params;
 
@@ -210,12 +211,12 @@ export const deleteMessage = async (req, res) => {
     message: 'Message deleted',
     fileId: message.type === 'file' ? message.fileId : null,
   });
-};
+});
 
 /**
  * Search messages
  */
-export const searchMessages = async (req, res) => {
+export const searchMessages = asyncHandler(async (req, res) => {
   const { userId } = req;
   const { q } = req.query;
 
@@ -232,12 +233,12 @@ export const searchMessages = async (req, res) => {
     count: messages.length,
     query: q,
   });
-};
+});
 
 /**
  * Get messages by file category
  */
-export const getMessagesByCategory = async (req, res) => {
+export const getMessagesByCategory = asyncHandler(async (req, res) => {
   const { userId } = req;
   const { category } = req.params;
 
@@ -266,4 +267,4 @@ export const getMessagesByCategory = async (req, res) => {
     count: messages.length,
     category,
   });
-};
+});

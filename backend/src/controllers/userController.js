@@ -1,10 +1,11 @@
 import { firestoreHelpers } from '../config/firebase.js';
 import { nanoid } from 'nanoid';
+import { asyncHandler } from '../utils/asyncHandler.js';
 
 /**
  * Get current user profile
  */
-export const getCurrentUser = async (req, res) => {
+export const getCurrentUser = asyncHandler(async (req, res) => {
   const { userId } = req;
   let user = await firestoreHelpers.getUserDoc(userId);
   // If user doesn't exist, create initial profile
@@ -35,12 +36,12 @@ export const getCurrentUser = async (req, res) => {
     });
   }
   res.json({ user });
-};
+});
 
 /**
  * Update user profile
  */
-export const updateUser = async (req, res) => {
+export const updateUser = asyncHandler(async (req, res) => {
   const { userId } = req;
   const updates = req.body;
 
@@ -65,12 +66,12 @@ export const updateUser = async (req, res) => {
     user,
     success: true,
   });
-};
+});
 
 /**
  * Get user devices
  */
-export const getDevices = async (req, res) => {
+export const getDevices = asyncHandler(async (req, res) => {
   const { userId } = req;
 
   const user = await firestoreHelpers.getUserDoc(userId);
@@ -85,12 +86,12 @@ export const getDevices = async (req, res) => {
     devices: user.devices || [],
     count: (user.devices || []).length,
   });
-};
+});
 
 /**
  * Create/register a new device
  */
-export const createDevice = async (req, res) => {
+export const createDevice = asyncHandler(async (req, res) => {
   const { userId } = req;
   const { name, type } = req.body;
 
@@ -134,12 +135,12 @@ export const createDevice = async (req, res) => {
     device: newDevice,
     success: true,
   });
-};
+});
 
 /**
  * Update device (rename)
  */
-export const updateDevice = async (req, res) => {
+export const updateDevice = asyncHandler(async (req, res) => {
   const { userId } = req;
   const { deviceId } = req.params;
   const { name } = req.body;
@@ -176,12 +177,12 @@ export const updateDevice = async (req, res) => {
     device: devices[deviceIndex],
     success: true,
   });
-};
+});
 
 /**
  * Delete device
  */
-export const deleteDevice = async (req, res) => {
+export const deleteDevice = asyncHandler(async (req, res) => {
   const { userId } = req;
   const { deviceId } = req.params;
 
@@ -208,12 +209,12 @@ export const deleteDevice = async (req, res) => {
     success: true,
     message: 'Device deleted',
   });
-};
+});
 
 /**
  * Get user analytics
  */
-export const getAnalytics = async (req, res) => {
+export const getAnalytics = asyncHandler(async (req, res) => {
   const { userId } = req;
 
   const user = await firestoreHelpers.getUserDoc(userId);
@@ -233,4 +234,4 @@ export const getAnalytics = async (req, res) => {
       ...user.analyticsData,
     },
   });
-};
+});

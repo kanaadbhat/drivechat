@@ -4,6 +4,26 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
+import {
+  Star,
+  StarOff,
+  Menu,
+  X,
+  Edit,
+  Copy,
+  Eye,
+  Trash2,
+  Paperclip,
+  Send,
+  Settings,
+  LogOut,
+  Filter,
+  Search,
+  Clock,
+  File,
+  ImageIcon,
+  FileText,
+} from 'lucide-react';
 
 dayjs.extend(relativeTime);
 

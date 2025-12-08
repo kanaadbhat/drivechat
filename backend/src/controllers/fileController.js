@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import { getFileCategory } from '../utils/fileUtils.js';
 import { getOAuthClientForUser, clearStoredTokens } from '../utils/googleAuth.js';
+import { asyncHandler } from '../utils/asyncHandler.js';
 // import { queueFileUpload, queueFileDelete } from '../queues/fileQueue.js';
 import multer from 'multer';
 import { Readable } from 'stream';
@@ -19,7 +20,7 @@ export const fileUploadMiddleware = upload.single('file');
 /**
  * Upload file to user's Google Drive using stored OAuth tokens
  */
-export const uploadFile = async (req, res) => {
+export const uploadFile = asyncHandler(async (req, res) => {
   try {
     const { userId } = req;
     const file = req.file;
@@ -191,12 +192,12 @@ export const uploadFile = async (req, res) => {
       details: error.errors || [],
     });
   }
-};
+});
 
 /**
  * Upload file to Google Drive (legacy - with user OAuth tokens)
  */
-export const uploadFileWithOAuth = async (req, res) => {
+export const uploadFileWithOAuth = asyncHandler(async (req, res) => {
   try {
     const { userId } = req;
     const { accessToken, fileName, fileData, mimeType } = req.body;
@@ -283,12 +284,12 @@ export const uploadFileWithOAuth = async (req, res) => {
       message: error.message,
     });
   }
-};
+});
 
 /**
  * Get file metadata from Drive
  */
-export const getFileMetadata = async (req, res) => {
+export const getFileMetadata = asyncHandler(async (req, res) => {
   try {
     const { userId } = req;
     const { fileId } = req.params;
@@ -309,12 +310,12 @@ export const getFileMetadata = async (req, res) => {
       message: error.message,
     });
   }
-};
+});
 
 /**
  * Download file from Drive
  */
-export const downloadFile = async (req, res) => {
+export const downloadFile = asyncHandler(async (req, res) => {
   try {
     const { userId } = req;
     const { fileId } = req.params;
@@ -344,12 +345,12 @@ export const downloadFile = async (req, res) => {
       message: error.message,
     });
   }
-};
+});
 
 /**
  * Delete file from Drive (queued for async processing)
  */
-export const deleteFile = async (req, res) => {
+export const deleteFile = asyncHandler(async (req, res) => {
   try {
     const { userId } = req;
     const { fileId } = req.params;
@@ -380,12 +381,12 @@ export const deleteFile = async (req, res) => {
       message: error.message,
     });
   }
-};
+});
 
 /**
  * Get file preview/thumbnail
  */
-export const getFilePreview = async (req, res) => {
+export const getFilePreview = asyncHandler(async (req, res) => {
   try {
     const { fileId } = req.params;
     const { userId } = req;
@@ -411,12 +412,12 @@ export const getFilePreview = async (req, res) => {
       message: error.message,
     });
   }
-};
+});
 
 /**
  * Proxy file content from Google Drive (for direct preview)
  */
-export const proxyFileContent = async (req, res) => {
+export const proxyFileContent = asyncHandler(async (req, res) => {
   try {
     const { fileId } = req.params;
     const { userId } = req;
@@ -451,4 +452,4 @@ export const proxyFileContent = async (req, res) => {
       message: error.message,
     });
   }
-};
+});

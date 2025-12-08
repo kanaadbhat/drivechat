@@ -1,8 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth, useUser } from '@clerk/clerk-react';
-import { ArrowLeft, User, Bell, Shield, Trash2, Save } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import {
+  checkGoogleConnection,
+  saveClerkProviderTokens,
+  revokeGoogleTokens,
+} from '../utils/driveAuth.js';
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
@@ -11,25 +15,17 @@ export default function SettingsPage() {
   const { user } = useUser();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [userProfile, setUserProfile] = useState(null);
   const [devices, setDevices] = useState([]);
   const [analytics, setAnalytics] = useState(null);
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [message, setMessage] = useState({ type: '', text: '' });
 
-  useEffect(() => {
-    fetchUserData();
-  }, []);
-
-  const fetchUserData = async () => {
+  const fetchUserData = useCallback(async () => {
     try {
       setLoading(true);
       const token = await getToken();
       if (!token) return;
-
-      // Fetch user profile
-      const profileRes = await axios.get(`${API_URL}/api/users/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      setUserProfile(profileRes.data.user);
 
       // Fetch devices
       const devicesRes = await axios.get(`${API_URL}/api/users/devices`, {
@@ -42,12 +38,20 @@ export default function SettingsPage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       setAnalytics(analyticsRes.data);
+
+      // Check Google connection
+      const connRes = await checkGoogleConnection(getToken);
+      setGoogleConnected(connRes.connected);
     } catch (error) {
       console.error('Error fetching user data:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [getToken]);
+
+  useEffect(() => {
+    fetchUserData();
+  }, [fetchUserData]);
 
   const removeDevice = async (deviceId) => {
     if (!confirm('Remove this device?')) return;
@@ -63,6 +67,49 @@ export default function SettingsPage() {
     } catch (error) {
       console.error('Error removing device:', error);
       alert('Failed to remove device');
+    }
+  };
+
+  const handleConnectGoogle = async () => {
+    try {
+      setGoogleLoading(true);
+      setMessage({ type: '', text: '' });
+
+      // Try to save Clerk provider tokens
+      await saveClerkProviderTokens(getToken);
+
+      setMessage({ type: 'success', text: 'Google Drive connected successfully!' });
+      setGoogleConnected(true);
+    } catch (error) {
+      console.error('Error connecting Google:', error);
+      setMessage({
+        type: 'error',
+        text: error.response?.data?.error || 'Failed to connect Google Drive',
+      });
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleDisconnectGoogle = async () => {
+    if (!confirm('Disconnect Google Drive? You will need to reconnect to upload files.')) return;
+
+    try {
+      setGoogleLoading(true);
+      setMessage({ type: '', text: '' });
+
+      await revokeGoogleTokens(getToken);
+
+      setMessage({ type: 'success', text: 'Google Drive disconnected.' });
+      setGoogleConnected(false);
+    } catch (error) {
+      console.error('Error disconnecting Google:', error);
+      setMessage({
+        type: 'error',
+        text: error.response?.data?.error || 'Failed to disconnect Google Drive',
+      });
+    } finally {
+      setGoogleLoading(false);
     }
   };
 
@@ -94,7 +141,52 @@ export default function SettingsPage() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Profile Section */}
+            {/* Messages */}
+            {message.text && (
+              <div
+                className={`p-4 rounded-lg ${
+                  message.type === 'success'
+                    ? 'bg-green-500/10 border border-green-500/20 text-green-400'
+                    : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                }`}
+              >
+                {message.text}
+              </div>
+            )}
+
+            {/* Google Drive Section */}
+            <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+              <div className="flex items-center gap-3 mb-6">
+                <HardDrive className="w-5 h-5 text-blue-400" />
+                <h2 className="text-xl font-semibold text-white">Google Drive</h2>
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-white font-medium mb-1">
+                    Status:{' '}
+                    <span className={googleConnected ? 'text-green-400' : 'text-gray-400'}>
+                      {googleConnected ? 'Connected' : 'Not Connected'}
+                    </span>
+                  </p>
+                  <p className="text-sm text-gray-400">
+                    {googleConnected
+                      ? 'You can upload files from Google Drive to chat'
+                      : 'Connect your Google Drive to share files in conversations'}
+                  </p>
+                </div>
+                <button
+                  onClick={googleConnected ? handleDisconnectGoogle : handleConnectGoogle}
+                  disabled={googleLoading}
+                  className={`px-4 py-2 rounded-lg transition-colors font-medium ${
+                    googleConnected
+                      ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400 disabled:opacity-50'
+                      : 'bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 disabled:opacity-50'
+                  }`}
+                >
+                  {googleLoading ? 'Processing...' : googleConnected ? 'Disconnect' : 'Connect'}
+                </button>
+              </div>
+            </div>
             <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
               <div className="flex items-center gap-3 mb-6">
                 <User className="w-5 h-5 text-blue-400" />

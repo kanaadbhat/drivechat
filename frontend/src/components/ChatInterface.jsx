@@ -1,25 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth, useUser, useSession } from '@clerk/clerk-react';
-import {
-  Paperclip,
-  Star,
-  Clock,
-  LogOut,
-  Settings,
-  Menu,
-  X,
-  StarOff,
-  Image as ImageIcon,
-  File,
-  FileText,
-  Trash2,
-  Search,
-  Send,
-  Filter,
-  Edit,
-  Copy,
-  Eye,
-} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import dayjs from 'dayjs';
@@ -37,7 +17,6 @@ export default function ChatInterface() {
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
-  const expiryTime = '24h'; // Hardcoded to 24 hours
   const [showSidebar, setShowSidebar] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
@@ -56,7 +35,7 @@ export default function ChatInterface() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  const fetchMessages = async () => {
+  const fetchMessages = useCallback(async () => {
     try {
       const token = await getToken();
       if (!token) return;
@@ -107,69 +86,80 @@ export default function ChatInterface() {
         }
       }
     }
-  };
+  }, [getToken, showStarredOnly, searchQuery]);
 
-  const checkGoogleConnection = async () => {
-    try {
-      const token = await getToken();
-      if (!token) return;
-
-      const response = await axios.get(`${API_URL}/api/oauth/google/check`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      setGoogleConnected(response.data.connected);
-    } catch (error) {
-      console.log('Google not connected:', error.response?.data?.message);
-      setGoogleConnected(false);
-    }
-  };
-
-  // Start Google OAuth flow
-  const startGoogleOAuth = async () => {
+  const checkGoogleConnection = useCallback(async () => {
     try {
       const token = await getToken();
       if (!token) {
-        alert('Authentication required');
-        return;
+        console.warn('   - ❌ [checkGoogleConnection] No JWT token');
+        return false;
       }
 
-      // Redirect to backend OAuth endpoint with token as query parameter
-      // (window.location.href doesn't send Authorization headers)
-      window.location.href = `${API_URL}/api/oauth/google/auth?token=${encodeURIComponent(token)}`;
+      console.log(
+        '   - 🔍 [checkGoogleConnection] Calling GET /api/authentication/google/check...'
+      );
+      const response = await axios.get(`${API_URL}/api/authentication/google/check`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const connected = response.data.connected;
+      const needsAuthorization = response.data.needsAuthorization;
+      console.log('     - Status: ' + (connected ? '✅ CONNECTED' : '❌ NOT CONNECTED'));
+      console.log('     - Has Refresh Token:', response.data.hasRefreshToken ? '✅' : '❌');
+      console.log('     - Needs Authorization:', needsAuthorization ? '⚠️  YES' : '❌ NO');
+
+      setGoogleConnected(connected);
+
+      // If authorization is needed (no tokens or no refresh token), redirect to auth page
+      if (needsAuthorization) {
+        console.log('   - 🔄 Redirecting to authorization page...');
+        navigate('/authorize?reauth=true');
+        return false;
+      }
+
+      return connected;
     } catch (error) {
-      console.error('OAuth start error:', error);
-      alert('Failed to start OAuth flow');
+      console.warn(
+        '   - ⚠️  [checkGoogleConnection] Request failed:',
+        error.response?.data?.message || error.message
+      );
+      setGoogleConnected(false);
+      return false;
     }
-  };
+  }, [getToken, navigate]);
 
   // Get Google OAuth token from Clerk session or Firestore
-  const getGoogleToken = async () => {
+  const getGoogleToken = useCallback(async () => {
     try {
-      console.log('=== GETTING GOOGLE TOKEN ===');
+      console.log('     - 🔑 [getGoogleToken] Fetching Google token...');
 
       const clerkToken = await getToken();
       if (!clerkToken) {
-        console.error('No Clerk token available');
+        console.error('       - ❌ No Clerk JWT available');
         return null;
       }
 
       // Get tokens from backend (which stores them in Firestore)
       try {
-        const response = await axios.get(`${API_URL}/api/oauth/google/tokens`, {
+        console.log('       - 📞 Calling GET /api/authentication/google/tokens...');
+        const response = await axios.get(`${API_URL}/api/authentication/google/tokens`, {
           headers: { Authorization: `Bearer ${clerkToken}` },
         });
-        console.log('Got tokens from backend:', response.data);
+        console.log('       - ✅ Got Google token from backend');
         return response.data.accessToken;
       } catch (backendError) {
-        console.error('Backend error:', backendError.response?.data);
+        console.error(
+          '       - ❌ Backend error:',
+          backendError.response?.data?.message || backendError.message
+        );
         return null;
       }
     } catch (error) {
-      console.error('Error getting Google token:', error);
+      console.error('       - ❌ Error getting Google token:', error);
       return null;
     }
-  };
+  }, [getToken]);
 
   // useEffect hooks
 
@@ -178,7 +168,7 @@ export default function ChatInterface() {
       await fetchMessages();
     };
     fetch();
-  }, [searchQuery, showStarredOnly]);
+  }, [searchQuery, showStarredOnly, fetchMessages]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -188,14 +178,33 @@ export default function ChatInterface() {
       }
     }, 5000);
     return () => clearInterval(interval);
-  }, [searchQuery, showStarredOnly]);
+  }, [searchQuery, showStarredOnly, fetchMessages]);
+
+  // Handle OAuth query parameters (success/error from authorization callback)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const success = params.get('success');
+    const error = params.get('error');
+
+    if (success === 'true') {
+      console.log('✅ Authorization callback successful');
+      checkGoogleConnection();
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (error) {
+      console.error('❌ Authorization callback failed:', error);
+      // Don't show alert - let AuthorizationPage handle error display
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [checkGoogleConnection]);
 
   useEffect(() => {
     const check = async () => {
       await checkGoogleConnection();
     };
     check();
-  }, []);
+  }, [checkGoogleConnection]);
 
   useEffect(() => {
     scrollToBottom();
@@ -215,6 +224,8 @@ export default function ChatInterface() {
         return;
       }
 
+      console.log('\n💬 [sendMessage] Starting message send...');
+
       // Get device info
       const deviceId = localStorage.getItem('deviceId') || `device-${Date.now()}`;
       const deviceName =
@@ -233,11 +244,15 @@ export default function ChatInterface() {
       let webContentLink = null;
 
       if (selectedFile) {
+        console.log('   - 📎 File selected:', selectedFile.name);
         try {
           // Get Google OAuth token from stored Firestore tokens
+          console.log('   - 🔑 Getting Google OAuth token...');
           const googleToken = await getGoogleToken();
+          console.log('   - Token: ' + (googleToken ? '✅ Got token' : '❌ No token'));
 
           if (!googleToken) {
+            console.warn('   - ❌ No Google token available');
             alert(
               'Please connect Google Drive first.\n\nClick the "Connect Google Drive" button in the sidebar.'
             );
@@ -245,6 +260,7 @@ export default function ChatInterface() {
             return;
           }
 
+          console.log('   - 📤 Uploading file to Google Drive...');
           const fileFormData = new FormData();
           fileFormData.append('file', selectedFile);
 
@@ -254,6 +270,7 @@ export default function ChatInterface() {
               'Content-Type': 'multipart/form-data',
             },
           });
+          console.log('   - ✅ File uploaded successfully:', fileResponse.data.fileName);
 
           fileId = fileResponse.data.fileId;
           fileName = fileResponse.data.fileName;
@@ -263,10 +280,24 @@ export default function ChatInterface() {
           webViewLink = fileResponse.data.webViewLink;
           webContentLink = fileResponse.data.webContentLink;
         } catch (uploadError) {
-          console.error('File upload failed:', uploadError);
-          alert(
-            `File upload failed: ${uploadError.response?.data?.message || uploadError.message}`
+          console.error(
+            '❌ File upload failed:',
+            uploadError.response?.data || uploadError.message
           );
+
+          // Check if token was revoked
+          if (uploadError.response?.data?.code === 'TOKEN_REVOKED') {
+            console.log('   - 🔄 Token revoked - clearing connection status');
+            setGoogleConnected(false);
+            alert(
+              'Google Drive authorization has expired or been revoked.\n\n' +
+                'Please reconnect your Google Drive account to upload files.'
+            );
+          } else {
+            alert(
+              `File upload failed: ${uploadError.response?.data?.message || uploadError.message}`
+            );
+          }
           setIsSending(false);
           return;
         }
@@ -432,33 +463,6 @@ export default function ChatInterface() {
     setContextMenu(null);
   };
 
-  // Get direct preview URL for Google Drive files via backend proxy
-  const getPreviewUrl = (fileId, mimeType) => {
-    if (!fileId) return null;
-
-    // Use backend proxy for all media files to handle authentication
-    if (
-      mimeType?.startsWith('image/') ||
-      mimeType?.startsWith('video/') ||
-      mimeType?.startsWith('audio/')
-    ) {
-      return `${API_URL}/api/files/${fileId}/content`;
-    }
-
-    // For PDFs, we can't use iframe with Google Drive due to CORS
-    // So we'll download it or show a link instead
-    if (mimeType === 'application/pdf') {
-      return `${API_URL}/api/files/${fileId}/content`;
-    }
-
-    return null;
-  };
-
-  const getDownloadUrl = (fileId) => {
-    if (!fileId) return null;
-    return `${API_URL}/api/files/${fileId}/content`;
-  };
-
   const handleDownloadFile = async (message) => {
     if (!message.fileId) return;
 
@@ -493,30 +497,33 @@ export default function ChatInterface() {
   };
 
   // Get authenticated URL with token for media
-  const getAuthenticatedUrl = async (fileId) => {
-    // Check if we already have the URL cached
-    if (authenticatedUrls[fileId]) {
-      return authenticatedUrls[fileId];
-    }
-
-    try {
-      const token = await getToken();
-      if (!token) {
-        console.error('No token available for authenticated URL');
-        return null;
+  const getAuthenticatedUrl = useCallback(
+    async (fileId) => {
+      // Check if we already have the URL cached
+      if (authenticatedUrls[fileId]) {
+        return authenticatedUrls[fileId];
       }
 
-      const url = `${API_URL}/api/files/${fileId}/content?token=${encodeURIComponent(token)}`;
+      try {
+        const token = await getToken();
+        if (!token) {
+          console.error('No token available for authenticated URL');
+          return null;
+        }
 
-      // Cache the URL
-      setAuthenticatedUrls((prev) => ({ ...prev, [fileId]: url }));
+        const url = `${API_URL}/api/files/${fileId}/content?token=${encodeURIComponent(token)}`;
 
-      return url;
-    } catch (error) {
-      console.error('Error getting authenticated URL:', error);
-      return null;
-    }
-  };
+        // Cache the URL
+        setAuthenticatedUrls((prev) => ({ ...prev, [fileId]: url }));
+
+        return url;
+      } catch (error) {
+        console.error('Error getting authenticated URL:', error);
+        return null;
+      }
+    },
+    [authenticatedUrls, getToken]
+  );
 
   // Generate authenticated URLs for all file messages when messages change
   useEffect(() => {
@@ -549,7 +556,7 @@ export default function ChatInterface() {
     if (messages.length > 0) {
       generateUrls();
     }
-  }, [messages]);
+  }, [messages, authenticatedUrls, getToken, getAuthenticatedUrl]);
 
   const handleEditMessage = async () => {
     if (!editText.trim() || !editingMessage) return;
@@ -661,20 +668,12 @@ export default function ChatInterface() {
               <Settings className="w-4 h-4" />
               Settings
             </button>
-            {googleConnected ? (
+            {googleConnected && (
               <button
                 onClick={checkGoogleConnection}
                 className="w-full px-4 py-2 text-left text-green-400 hover:text-green-300 hover:bg-green-900/20 rounded-lg transition-colors flex items-center gap-3 text-xs"
               >
                 ✅ Google Drive Connected
-              </button>
-            ) : (
-              <button
-                onClick={startGoogleOAuth}
-                className="w-full px-4 py-2 text-left text-blue-400 hover:text-blue-300 hover:bg-blue-900/20 rounded-lg transition-colors flex items-center gap-3 text-xs font-medium"
-                title="Click to authorize Google Drive access for file uploads"
-              >
-                🔗 Connect Google Drive
               </button>
             )}
             <button

@@ -1,15 +1,28 @@
-import { SignIn } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { useAuth, SignIn } from '@clerk/clerk-react';
 
 export default function SignInPage() {
   const navigate = useNavigate();
+  const { isSignedIn } = useAuth();
+
+  useEffect(() => {
+    // After successful sign-in, redirect to authorization page
+    if (isSignedIn) {
+      console.log('✅ [SignInPage] User signed in, redirecting to authorization page...');
+      navigate('/authorize');
+    }
+  }, [isSignedIn, navigate]);
 
   return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-white mb-2">Welcome to DriveChat</h1>
-          <p className="text-gray-400">Sign in to start chatting</p>
+          <p className="text-gray-400">Sign in with your Google account to get started</p>
+          <p className="text-sm text-gray-500 mt-2">
+            Google Drive permissions will be requested on first login
+          </p>
         </div>
         <SignIn
           appearance={{
@@ -26,8 +39,8 @@ export default function SignInPage() {
               identityPreviewEditButton: 'text-blue-400',
             },
           }}
-          redirectUrl="/chat"
-          afterSignInUrl="/chat"
+          redirectUrl="/authorize"
+          afterSignInUrl="/authorize"
         />
       </div>
     </div>

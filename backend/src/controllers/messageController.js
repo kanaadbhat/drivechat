@@ -1,5 +1,6 @@
 import { firestoreHelpers, admin } from '../config/firebase.js';
-import { scheduleMessageDeletion, cancelMessageDeletion } from '../queues/cleanupQueue.js';
+// Queue system is disabled for now
+// import { scheduleMessageDeletion, cancelMessageDeletion } from '../queues/cleanupQueue.js';
 
 /**
  * Get all messages for the authenticated user
@@ -102,15 +103,14 @@ export const createMessage = async (req, res) => {
   // Create message in Firestore
   const message = await firestoreHelpers.createMessage(userId, messageData);
 
-  // Schedule auto-deletion if message has expiry
-  if (messageData.expiresAt && !messageData.starred) {
-    try {
-      await scheduleMessageDeletion(userId, message.id, messageData.expiresAt);
-    } catch (error) {
-      console.error('Failed to schedule message deletion:', error);
-      // Don't fail the request if scheduling fails
-    }
-  }
+  // Schedule auto-deletion if message has expiry (disabled for now)
+  // if (messageData.expiresAt && !messageData.starred) {
+  //   try {
+  //     await scheduleMessageDeletion(userId, message.id, messageData.expiresAt);
+  //   } catch (error) {
+  //     console.error('Failed to schedule message deletion:', error);
+  //   }
+  // }
 
   // Update user analytics
   await firestoreHelpers.updateUserAnalytics(userId, {
@@ -145,23 +145,23 @@ export const updateMessage = async (req, res) => {
   // Handle starring/unstarring
   if (typeof starred === 'boolean') {
     updates.starred = starred;
-    // If starred, remove expiry and cancel scheduled deletion
+    // If starred, remove expiry and cancel scheduled deletion (queue system disabled)
     if (starred) {
       updates.expiresAt = null;
-      try {
-        await cancelMessageDeletion(userId, id);
-      } catch (error) {
-        console.error('Failed to cancel message deletion:', error);
-      }
+      // try {
+      //   await cancelMessageDeletion(userId, id);
+      // } catch (error) {
+      //   console.error('Failed to cancel message deletion:', error);
+      // }
     } else {
-      // If unstarred, set expiry to 24 hours from now and schedule deletion
+      // If unstarred, set expiry to 24 hours from now and schedule deletion (queue system disabled)
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       updates.expiresAt = expiresAt;
-      try {
-        await scheduleMessageDeletion(userId, id, expiresAt);
-      } catch (error) {
-        console.error('Failed to schedule message deletion:', error);
-      }
+      // try {
+      //   await scheduleMessageDeletion(userId, id, expiresAt);
+      // } catch (error) {
+      //   console.error('Failed to schedule message deletion:', error);
+      // }
     }
   }
 

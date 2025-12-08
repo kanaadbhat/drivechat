@@ -1,6 +1,7 @@
 {
   "name": "syncit",
   "version": "1.0.0",
+  "type": "module",
   "private": true,
   "scripts": {
     "start": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",

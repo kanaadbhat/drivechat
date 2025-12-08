@@ -12,8 +12,8 @@ import messageRoutes from './routes/messages.js';
 import fileRoutes from './routes/files.js';
 import userRoutes from './routes/users.js';
 import adminRoutes from './routes/admin.js';
-import authRoutes from './routes/auth.js';
-import oauthRoutes from './routes/oauth.js';
+import authenticationRoutes from './routes/authentication.js';
+import authorizationRoutes from './routes/authorization.js';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler.js';
@@ -50,8 +50,8 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/auth', authRoutes);
-app.use('/api/oauth', oauthRoutes);
+app.use('/api/authentication', authenticationRoutes);
+app.use('/api/authorization', authorizationRoutes);
 
 // 404 handler
 app.use((req, res) => {

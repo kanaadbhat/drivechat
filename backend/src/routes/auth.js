@@ -5,7 +5,27 @@ import * as authController from '../controllers/authController.js';
 
 const router = express.Router();
 
-// Get Google OAuth token for current user
-router.get('/google-token', requireAuth, asyncHandler(authController.getGoogleToken));
+// Clerk provider tokens (server-side retrieval from Clerk backend)
+router.post(
+  '/clerk/save-provider-tokens',
+  requireAuth,
+  asyncHandler(authController.saveClerkProviderTokens)
+);
+
+// Client-side token saving (fallback when Clerk doesn't expose tokens)
+router.post(
+  '/save-provider-tokens',
+  requireAuth,
+  asyncHandler(authController.saveProviderTokensFromClient)
+);
+
+// Get stored tokens
+router.get('/google/tokens', requireAuth, asyncHandler(authController.getStoredGoogleTokens));
+
+// Check connection status
+router.get('/google/check', requireAuth, asyncHandler(authController.checkGoogleConnection));
+
+// Revoke tokens
+router.delete('/google/revoke', requireAuth, asyncHandler(authController.revokeGoogleTokens));
 
 export default router;

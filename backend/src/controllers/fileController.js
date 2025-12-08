@@ -1,11 +1,9 @@
 import { google } from 'googleapis';
 import { getFileCategory } from '../utils/fileUtils.js';
-import { queueFileUpload, queueFileDelete } from '../queues/fileQueue.js';
+import { getOAuthClientForUser, clearStoredTokens } from '../utils/googleAuth.js';
+// import { queueFileUpload, queueFileDelete } from '../queues/fileQueue.js';
 import multer from 'multer';
 import { Readable } from 'stream';
-import admin from 'firebase-admin';
-
-const db = admin.firestore();
 
 // Configure multer for memory storage
 const upload = multer({
@@ -26,42 +24,26 @@ export const uploadFile = async (req, res) => {
     const { userId } = req;
     const file = req.file;
 
+    console.log(`\n[DEBUG] [uploadFile] START`);
+    console.log(`[DEBUG]   userId: ${userId}`);
+    console.log(`[DEBUG]   file: ${file?.originalname || 'NONE'}`);
+
     if (!file) {
+      console.log(`[DEBUG]   ❌ No file in request`);
       return res.status(400).json({
         error: 'No file provided',
       });
     }
 
-    // Get stored Google OAuth tokens from Firestore
-    const tokenDoc = await db
-      .collection('users')
-      .doc(userId)
-      .collection('oauth')
-      .doc('google')
-      .get();
-
-    if (!tokenDoc.exists) {
-      return res.status(401).json({
-        error: 'Google account not connected',
-        message: 'Please authenticate with Google first',
-      });
-    }
-
-    const tokenData = tokenDoc.data();
-    const { accessToken, refreshToken } = tokenData;
-
-    // Create OAuth2 client with stored tokens
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET
+    console.log(
+      `[DEBUG]   📤 Uploading file: ${file.originalname} (${file.size} bytes, ${file.mimetype})`
     );
 
-    oauth2Client.setCredentials({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
-
+    // Get OAuth client with auto token refresh
+    console.log(`[DEBUG]   Getting OAuth client...`);
+    const oauth2Client = await getOAuthClientForUser(userId);
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    console.log(`[DEBUG]   ✅ OAuth client ready`);
 
     // Create DriveChat folder if it doesn't exist
     const folderName = 'DriveChat';
@@ -69,6 +51,7 @@ export const uploadFile = async (req, res) => {
 
     try {
       // Search for existing folder
+      console.log(`[DEBUG]   Searching for existing '${folderName}' folder...`);
       const folderQuery = await drive.files.list({
         q: `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
         fields: 'files(id, name)',
@@ -77,8 +60,10 @@ export const uploadFile = async (req, res) => {
 
       if (folderQuery.data.files && folderQuery.data.files.length > 0) {
         folderId = folderQuery.data.files[0].id;
+        console.log(`[DEBUG]   ✅ Found existing folder: ${folderId}`);
       } else {
         // Create folder
+        console.log(`[DEBUG]   Creating new '${folderName}' folder...`);
         const folderMetadata = {
           name: folderName,
           mimeType: 'application/vnd.google-apps.folder',
@@ -88,18 +73,43 @@ export const uploadFile = async (req, res) => {
           fields: 'id',
         });
         folderId = folder.data.id;
+        console.log(`[DEBUG]   ✅ Created new folder: ${folderId}`);
       }
     } catch (folderError) {
-      console.error('Folder creation/search error:', folderError);
-      // Continue without folder
+      console.error(`[DEBUG]   ❌ Folder error: ${folderError.message}`);
+      console.error(`[DEBUG]     Code: ${folderError.code}, Status: ${folderError.status}`);
+
+      // Check for invalid credentials (401)
+      if (folderError.code === 401 || folderError.status === 401) {
+        console.log(`[DEBUG]   🔄 Clearing tokens due to 401 error`);
+        await clearStoredTokens(userId);
+        return res.status(401).json({
+          error: 'Google Drive authorization invalid or expired. Please reconnect your account.',
+          code: 'TOKEN_INVALID',
+        });
+      }
+
+      // Check for invalid_grant (revoked/expired refresh token)
+      if (folderError.message?.includes('invalid_grant') || folderError.code === 400) {
+        console.log(`[DEBUG]   🔄 Clearing tokens due to invalid_grant error`);
+        await clearStoredTokens(userId);
+        return res.status(401).json({
+          error: 'Google Drive authorization expired or revoked. Please reconnect your account.',
+          code: 'TOKEN_REVOKED',
+        });
+      }
+      // Continue without folder for other errors
+      console.log(`[DEBUG]   ⚠️  Continuing without folder...`);
     }
 
     // Convert buffer to readable stream
+    console.log(`[DEBUG]   Converting file buffer to stream...`);
     const bufferStream = new Readable();
     bufferStream.push(file.buffer);
     bufferStream.push(null);
 
     // Upload file to Drive
+    console.log(`[DEBUG]   Creating file metadata...`);
     const fileMetadata = {
       name: file.originalname,
       ...(folderId && { parents: [folderId] }),
@@ -110,14 +120,18 @@ export const uploadFile = async (req, res) => {
       body: bufferStream,
     };
 
+    console.log(`[DEBUG]   Uploading to Google Drive API...`);
     const driveFile = await drive.files.create({
       requestBody: fileMetadata,
       media: media,
       fields: 'id, name, mimeType, size, webViewLink, webContentLink, thumbnailLink',
     });
 
+    console.log(`[DEBUG]   ✅ File uploaded: ${driveFile.data.id}`);
+
     // Make file accessible with link
     try {
+      console.log(`[DEBUG]   Setting file permissions...`);
       await drive.permissions.create({
         fileId: driveFile.data.id,
         requestBody: {
@@ -125,12 +139,14 @@ export const uploadFile = async (req, res) => {
           type: 'anyone',
         },
       });
+      console.log(`[DEBUG]   ✅ Permissions set`);
     } catch (permError) {
-      console.warn('Could not set file permissions:', permError.message);
+      console.warn(`[DEBUG]   ⚠️  Could not set file permissions: ${permError.message}`);
     }
 
     const fileCategory = getFileCategory(file.mimetype);
 
+    console.log(`[DEBUG]   ✅ [uploadFile] SUCCESS`);
     res.json({
       success: true,
       fileId: driveFile.data.id,
@@ -144,7 +160,30 @@ export const uploadFile = async (req, res) => {
       message: 'File uploaded to Google Drive successfully',
     });
   } catch (error) {
-    console.error('File upload error:', error);
+    console.error(`\n[DEBUG] [uploadFile] ERROR`);
+    console.error(`[DEBUG]   Message: ${error.message}`);
+    console.error(`[DEBUG]   Code: ${error.code}`);
+    console.error(`[DEBUG]   Status: ${error.status}`);
+
+    // Check for invalid credentials (401)
+    if (error.code === 401 || error.status === 401) {
+      console.log(`[DEBUG]   🔄 Clearing tokens due to 401 error`);
+      await clearStoredTokens(req.userId);
+      return res.status(401).json({
+        error: 'Google Drive authorization invalid or expired. Please reconnect your account.',
+        code: 'TOKEN_INVALID',
+      });
+    }
+
+    // Check for invalid_grant (revoked/expired refresh token)
+    if (error.message?.includes('invalid_grant') || error.code === 400) {
+      console.log(`[DEBUG]   🔄 Clearing tokens due to invalid_grant error`);
+      await clearStoredTokens(req.userId);
+      return res.status(401).json({
+        error: 'Google Drive authorization expired or revoked. Please reconnect your account.',
+        code: 'TOKEN_REVOKED',
+      });
+    }
 
     res.status(500).json({
       error: 'File upload failed',
@@ -160,7 +199,7 @@ export const uploadFile = async (req, res) => {
 export const uploadFileWithOAuth = async (req, res) => {
   try {
     const { userId } = req;
-    const { accessToken, refreshToken, fileName, fileData, mimeType, async = false } = req.body;
+    const { accessToken, fileName, fileData, mimeType } = req.body;
 
     if (!accessToken || !fileName || !fileData) {
       return res.status(400).json({
@@ -169,37 +208,12 @@ export const uploadFileWithOAuth = async (req, res) => {
       });
     }
 
-    // If async flag is set, queue the upload
-    if (async) {
-      const job = await queueFileUpload({
-        accessToken,
-        refreshToken,
-        userId,
-        fileName,
-        fileData,
-        mimeType,
-      });
-
-      return res.json({
-        success: true,
-        queued: true,
-        jobId: job.id,
-        message: 'File upload queued for processing',
-      });
-    }
+    // ...existing code...
 
     // Otherwise, process synchronously (original behavior)
 
     // Set up OAuth client with user's tokens
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET
-    );
-    oauth2Client.setCredentials({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
-
+    const oauth2Client = await getOAuthClientForUser(userId);
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
     // Create DriveChat folder if it doesn't exist
@@ -276,24 +290,10 @@ export const uploadFileWithOAuth = async (req, res) => {
  */
 export const getFileMetadata = async (req, res) => {
   try {
+    const { userId } = req;
     const { fileId } = req.params;
-    const { accessToken, refreshToken } = req.query;
 
-    if (!accessToken) {
-      return res.status(400).json({
-        error: 'Access token is required',
-      });
-    }
-
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET
-    );
-    oauth2Client.setCredentials({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
-
+    const oauth2Client = await getOAuthClientForUser(userId);
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
     const file = await drive.files.get({
@@ -316,24 +316,10 @@ export const getFileMetadata = async (req, res) => {
  */
 export const downloadFile = async (req, res) => {
   try {
+    const { userId } = req;
     const { fileId } = req.params;
-    const { accessToken, refreshToken } = req.query;
 
-    if (!accessToken) {
-      return res.status(400).json({
-        error: 'Access token is required',
-      });
-    }
-
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET
-    );
-    oauth2Client.setCredentials({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
-
+    const oauth2Client = await getOAuthClientForUser(userId);
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
     // Get file metadata
@@ -367,7 +353,7 @@ export const deleteFile = async (req, res) => {
   try {
     const { userId } = req;
     const { fileId } = req.params;
-    const { accessToken, refreshToken, async = false } = req.body;
+    const { accessToken } = req.body;
 
     if (!accessToken) {
       return res.status(400).json({
@@ -375,33 +361,10 @@ export const deleteFile = async (req, res) => {
       });
     }
 
-    // If async flag is set, queue the deletion
-    if (async) {
-      const job = await queueFileDelete({
-        accessToken,
-        refreshToken,
-        userId,
-        fileId,
-      });
-
-      return res.json({
-        success: true,
-        queued: true,
-        jobId: job.id,
-        message: 'File deletion queued for processing',
-      });
-    }
+    // ...existing code...
 
     // Otherwise, process synchronously (original behavior)
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET
-    );
-    oauth2Client.setCredentials({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
-
+    const oauth2Client = await getOAuthClientForUser(userId);
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
     await drive.files.delete({ fileId });
@@ -427,32 +390,7 @@ export const getFilePreview = async (req, res) => {
     const { fileId } = req.params;
     const { userId } = req;
 
-    // Get stored Google OAuth tokens from Firestore
-    const tokenDoc = await db
-      .collection('users')
-      .doc(userId)
-      .collection('oauth')
-      .doc('google')
-      .get();
-
-    if (!tokenDoc.exists) {
-      return res.status(401).json({
-        error: 'Google account not connected',
-      });
-    }
-
-    const tokenData = tokenDoc.data();
-    const { accessToken, refreshToken } = tokenData;
-
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET
-    );
-    oauth2Client.setCredentials({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
-
+    const oauth2Client = await getOAuthClientForUser(userId);
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
     const file = await drive.files.get({
@@ -483,32 +421,7 @@ export const proxyFileContent = async (req, res) => {
     const { fileId } = req.params;
     const { userId } = req;
 
-    // Get stored Google OAuth tokens from Firestore
-    const tokenDoc = await db
-      .collection('users')
-      .doc(userId)
-      .collection('oauth')
-      .doc('google')
-      .get();
-
-    if (!tokenDoc.exists) {
-      return res.status(401).json({
-        error: 'Google account not connected',
-      });
-    }
-
-    const tokenData = tokenDoc.data();
-    const { accessToken, refreshToken } = tokenData;
-
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET
-    );
-    oauth2Client.setCredentials({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
-
+    const oauth2Client = await getOAuthClientForUser(userId);
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
     // Get file metadata first

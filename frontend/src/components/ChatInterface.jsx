@@ -24,6 +24,13 @@ import {
   ImageIcon,
   FileText,
 } from 'lucide-react';
+import {
+  initializeDevice,
+  getCurrentDevice,
+  isDeviceRegistered,
+  getDeviceIcon,
+  DEVICE_TYPES,
+} from '../utils/deviceManager';
 
 dayjs.extend(relativeTime);
 
@@ -47,6 +54,7 @@ export default function ChatInterface() {
   const [editText, setEditText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [authenticatedUrls, setAuthenticatedUrls] = useState({});
+  const [currentDevice, setCurrentDevice] = useState(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -226,6 +234,13 @@ export default function ChatInterface() {
     check();
   }, [checkGoogleConnection]);
 
+  // Initialize device on mount
+  useEffect(() => {
+    const device = initializeDevice();
+    setCurrentDevice(device);
+    console.log('Device initialized:', device);
+  }, []);
+
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
@@ -246,13 +261,9 @@ export default function ChatInterface() {
 
       console.log('\n💬 [sendMessage] Starting message send...');
 
-      // Get device info
-      const deviceId = localStorage.getItem('deviceId') || `device-${Date.now()}`;
-      const deviceName =
-        localStorage.getItem('deviceName') || `Browser-${navigator.userAgent.split(' ').pop()}`;
-
-      localStorage.setItem('deviceId', deviceId);
-      localStorage.setItem('deviceName', deviceName);
+      // Get device info from currentDevice state
+      const device = currentDevice || initializeDevice();
+      if (!currentDevice) setCurrentDevice(device);
 
       // If file is selected, upload to Google Drive
       let fileId = null;
@@ -330,8 +341,11 @@ export default function ChatInterface() {
           {
             type: 'text',
             text: inputMessage.trim(),
-            deviceId,
-            deviceName,
+            sender: {
+              deviceId: device.deviceId,
+              deviceName: device.name,
+              deviceType: device.type,
+            },
           },
           {
             headers: {
@@ -354,8 +368,11 @@ export default function ChatInterface() {
             mimeType,
             fileCategory,
             filePreviewUrl: webContentLink || webViewLink,
-            deviceId,
-            deviceName,
+            sender: {
+              deviceId: device.deviceId,
+              deviceName: device.name,
+              deviceType: device.type,
+            },
           },
           {
             headers: {
@@ -820,201 +837,232 @@ export default function ChatInterface() {
             </div>
           ) : (
             messages.map((message) => {
-              // Check if the message belongs to the current user
-              const isSentByMe = message.sender?.deviceId === localStorage.getItem('deviceId');
+              // Check if the message belongs to the current device
+              const isSentByMe = message.sender?.deviceId === currentDevice?.deviceId;
               const isEditing = editingMessage === message.id;
+              const deviceType = message.sender?.deviceType || DEVICE_TYPES.GUEST;
+              const deviceName = message.sender?.deviceName || 'Guest Device';
+              const deviceIcon = getDeviceIcon(deviceType);
 
               return (
                 <div
                   key={message.id}
-                  className={`flex ${isSentByMe ? 'justify-end' : 'justify-start'}`}
+                  className={`flex gap-3 ${isSentByMe ? 'justify-end' : 'justify-start'}`}
                 >
-                  <div
-                    className={`max-w-md px-4 py-3 rounded-lg ${
-                      isSentByMe ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-100'
-                    } relative group`}
-                    onContextMenu={(e) => handleContextMenu(e, message)}
-                  >
-                    {message.type === 'text' && message.text && (
-                      <>
-                        {isEditing ? (
-                          <div className="space-y-2">
-                            <input
-                              type="text"
-                              value={editText}
-                              onChange={(e) => setEditText(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleEditMessage();
-                                if (e.key === 'Escape') {
-                                  setEditingMessage(null);
-                                  setEditText('');
-                                }
-                              }}
-                              className="w-full px-2 py-1 bg-gray-700 text-white rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
-                              autoFocus
-                            />
-                            <div className="flex gap-2">
-                              <button
-                                onClick={handleEditMessage}
-                                className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded"
-                              >
-                                Save
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setEditingMessage(null);
-                                  setEditText('');
+                  {/* Device Avatar - Left side for others */}
+                  {!isSentByMe && (
+                    <div className="flex flex-col items-center gap-1 mt-1">
+                      <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center border-2 border-gray-600 shrink-0">
+                        <img src={deviceIcon} alt={deviceType} className="w-5 h-5 text-gray-300" />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Message Content */}
+                  <div className="flex flex-col max-w-md">
+                    {/* Device Name */}
+                    <div
+                      className={`text-xs text-gray-400 mb-1 px-1 ${isSentByMe ? 'text-right' : 'text-left'}`}
+                    >
+                      {deviceName}
+                    </div>
+
+                    <div
+                      className={`px-4 py-3 rounded-lg ${
+                        isSentByMe ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-100'
+                      } relative group`}
+                      onContextMenu={(e) => handleContextMenu(e, message)}
+                    >
+                      {message.type === 'text' && message.text && (
+                        <>
+                          {isEditing ? (
+                            <div className="space-y-2">
+                              <input
+                                type="text"
+                                value={editText}
+                                onChange={(e) => setEditText(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') handleEditMessage();
+                                  if (e.key === 'Escape') {
+                                    setEditingMessage(null);
+                                    setEditText('');
+                                  }
                                 }}
-                                className="px-2 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
-                              >
-                                Cancel
-                              </button>
+                                className="w-full px-2 py-1 bg-gray-700 text-white rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+                                autoFocus
+                              />
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={handleEditMessage}
+                                  className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setEditingMessage(null);
+                                    setEditText('');
+                                  }}
+                                  className="px-2 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        ) : (
-                          <p className="wrap-break-word">
-                            {message.text}
-                            {message.edited && (
-                              <span className="text-xs opacity-60 ml-2">(edited)</span>
-                            )}
-                          </p>
-                        )}
-                      </>
-                    )}
-                    {message.type === 'file' && message.fileName && (
-                      <div
-                        className="flex flex-col gap-2"
-                        onDoubleClick={() =>
-                          message.fileId &&
-                          window.open(
-                            `https://drive.google.com/file/d/${message.fileId}/view`,
-                            '_blank'
-                          )
-                        }
-                      >
-                        {/* Image preview */}
-                        {message.mimeType?.startsWith('image/') && message.fileId && (
-                          <>
-                            {authenticatedUrls[message.fileId] ? (
-                              <img
-                                src={authenticatedUrls[message.fileId]}
-                                alt={message.fileName}
-                                className="max-w-xs max-h-64 rounded cursor-pointer object-cover"
+                          ) : (
+                            <p className="wrap-break-word">
+                              {message.text}
+                              {message.edited && (
+                                <span className="text-xs opacity-60 ml-2">(edited)</span>
+                              )}
+                            </p>
+                          )}
+                        </>
+                      )}
+                      {message.type === 'file' && message.fileName && (
+                        <div
+                          className="flex flex-col gap-2"
+                          onDoubleClick={() =>
+                            message.fileId &&
+                            window.open(
+                              `https://drive.google.com/file/d/${message.fileId}/view`,
+                              '_blank'
+                            )
+                          }
+                        >
+                          {/* Image preview */}
+                          {message.mimeType?.startsWith('image/') && message.fileId && (
+                            <>
+                              {authenticatedUrls[message.fileId] ? (
+                                <img
+                                  src={authenticatedUrls[message.fileId]}
+                                  alt={message.fileName}
+                                  className="max-w-xs max-h-64 rounded cursor-pointer object-cover"
+                                  onClick={() =>
+                                    window.open(
+                                      `https://drive.google.com/file/d/${message.fileId}/view`,
+                                      '_blank'
+                                    )
+                                  }
+                                  onError={(e) => {
+                                    console.error('Image load error for', message.fileId);
+                                    e.target.style.display = 'none';
+                                  }}
+                                />
+                              ) : (
+                                <div className="flex items-center justify-center w-32 h-32 bg-gray-700 rounded">
+                                  <span className="text-gray-400 text-xs">Loading...</span>
+                                </div>
+                              )}
+                            </>
+                          )}
+                          {/* Video preview with controls */}
+                          {message.mimeType?.startsWith('video/') && message.fileId && (
+                            <>
+                              {authenticatedUrls[message.fileId] ? (
+                                <video
+                                  controls
+                                  controlsList="nodownload"
+                                  className="max-w-xs max-h-64 rounded"
+                                  onError={(e) => {
+                                    console.error('Video load error for', message.fileId);
+                                    e.target.style.display = 'none';
+                                  }}
+                                >
+                                  <source
+                                    src={authenticatedUrls[message.fileId]}
+                                    type={message.mimeType}
+                                  />
+                                  Your browser does not support the video tag.
+                                </video>
+                              ) : (
+                                <div className="flex items-center justify-center w-64 h-48 bg-gray-700 rounded">
+                                  <span className="text-gray-400 text-xs">Loading video...</span>
+                                </div>
+                              )}
+                            </>
+                          )}
+                          {/* Audio preview with controls */}
+                          {message.mimeType?.startsWith('audio/') && message.fileId && (
+                            <>
+                              {authenticatedUrls[message.fileId] ? (
+                                <audio controls className="w-full max-w-xs">
+                                  <source
+                                    src={authenticatedUrls[message.fileId]}
+                                    type={message.mimeType}
+                                  />
+                                  Your browser does not support the audio tag.
+                                </audio>
+                              ) : (
+                                <div className="flex items-center justify-center w-64 h-12 bg-gray-700 rounded">
+                                  <span className="text-gray-400 text-xs">Loading audio...</span>
+                                </div>
+                              )}
+                            </>
+                          )}
+                          {/* PDF preview - show link instead of iframe due to CORS */}
+                          {message.mimeType === 'application/pdf' && message.fileId && (
+                            <div className="px-4 py-3 bg-gray-700/50 rounded">
+                              <p className="text-sm text-gray-300 mb-2">PDF Document</p>
+                              <button
                                 onClick={() =>
                                   window.open(
                                     `https://drive.google.com/file/d/${message.fileId}/view`,
                                     '_blank'
                                   )
                                 }
-                                onError={(e) => {
-                                  console.error('Image load error for', message.fileId);
-                                  e.target.style.display = 'none';
-                                }}
-                              />
-                            ) : (
-                              <div className="flex items-center justify-center w-32 h-32 bg-gray-700 rounded">
-                                <span className="text-gray-400 text-xs">Loading...</span>
-                              </div>
-                            )}
-                          </>
-                        )}
-                        {/* Video preview with controls */}
-                        {message.mimeType?.startsWith('video/') && message.fileId && (
-                          <>
-                            {authenticatedUrls[message.fileId] ? (
-                              <video
-                                controls
-                                controlsList="nodownload"
-                                className="max-w-xs max-h-64 rounded"
-                                onError={(e) => {
-                                  console.error('Video load error for', message.fileId);
-                                  e.target.style.display = 'none';
-                                }}
+                                className="text-sm text-blue-400 hover:text-blue-300 underline"
                               >
-                                <source
-                                  src={authenticatedUrls[message.fileId]}
-                                  type={message.mimeType}
-                                />
-                                Your browser does not support the video tag.
-                              </video>
-                            ) : (
-                              <div className="flex items-center justify-center w-64 h-48 bg-gray-700 rounded">
-                                <span className="text-gray-400 text-xs">Loading video...</span>
-                              </div>
-                            )}
-                          </>
-                        )}
-                        {/* Audio preview with controls */}
-                        {message.mimeType?.startsWith('audio/') && message.fileId && (
-                          <>
-                            {authenticatedUrls[message.fileId] ? (
-                              <audio controls className="w-full max-w-xs">
-                                <source
-                                  src={authenticatedUrls[message.fileId]}
-                                  type={message.mimeType}
-                                />
-                                Your browser does not support the audio tag.
-                              </audio>
-                            ) : (
-                              <div className="flex items-center justify-center w-64 h-12 bg-gray-700 rounded">
-                                <span className="text-gray-400 text-xs">Loading audio...</span>
-                              </div>
-                            )}
-                          </>
-                        )}
-                        {/* PDF preview - show link instead of iframe due to CORS */}
-                        {message.mimeType === 'application/pdf' && message.fileId && (
-                          <div className="px-4 py-3 bg-gray-700/50 rounded">
-                            <p className="text-sm text-gray-300 mb-2">PDF Document</p>
-                            <button
-                              onClick={() =>
-                                window.open(
-                                  `https://drive.google.com/file/d/${message.fileId}/view`,
-                                  '_blank'
-                                )
-                              }
-                              className="text-sm text-blue-400 hover:text-blue-300 underline"
-                            >
-                              Open in Google Drive
-                            </button>
-                          </div>
-                        )}
-                        {/* File info */}
-                        <div className="flex items-center gap-2 text-sm">
-                          {getFileIcon(message.fileName)}
-                          <span className="truncate font-medium">{message.fileName}</span>
-                        </div>
-                        {message.fileSize && (
-                          <p className="text-xs opacity-75">
-                            {(message.fileSize / 1024).toFixed(2)} KB
-                          </p>
-                        )}
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between gap-2 mt-2 text-xs opacity-75">
-                      <span>{dayjs(message.timestamp).fromNow()}</span>
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => toggleStar(message.id, message.starred)}
-                          className="hover:scale-110 transition-transform"
-                        >
-                          {message.starred ? (
-                            <Star className="w-3 h-3 fill-current" />
-                          ) : (
-                            <StarOff className="w-3 h-3" />
+                                Open in Google Drive
+                              </button>
+                            </div>
                           )}
-                        </button>
-                        {isSentByMe && (
+                          {/* File info */}
+                          <div className="flex items-center gap-2 text-sm">
+                            {getFileIcon(message.fileName)}
+                            <span className="truncate font-medium">{message.fileName}</span>
+                          </div>
+                          {message.fileSize && (
+                            <p className="text-xs opacity-75">
+                              {(message.fileSize / 1024).toFixed(2)} KB
+                            </p>
+                          )}
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-2 mt-2 text-xs opacity-75">
+                        <span>{dayjs(message.timestamp).fromNow()}</span>
+                        <div className="flex gap-1">
                           <button
-                            onClick={() => deleteMessage(message.id)}
-                            className="hover:scale-110 transition-transform text-red-400"
+                            onClick={() => toggleStar(message.id, message.starred)}
+                            className="hover:scale-110 transition-transform"
                           >
-                            <Trash2 className="w-3 h-3" />
+                            {message.starred ? (
+                              <Star className="w-3 h-3 fill-current" />
+                            ) : (
+                              <StarOff className="w-3 h-3" />
+                            )}
                           </button>
-                        )}
+                          {isSentByMe && (
+                            <button
+                              onClick={() => deleteMessage(message.id)}
+                              className="hover:scale-110 transition-transform text-red-400"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
+
+                  {/* Device Avatar - Right side for own messages */}
+                  {isSentByMe && (
+                    <div className="flex flex-col items-center gap-1 mt-1">
+                      <div className="w-10 h-10 rounded-full bg-blue-700 flex items-center justify-center border-2 border-blue-500 shrink-0">
+                        <img src={deviceIcon} alt={deviceType} className="w-5 h-5 text-white" />
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })

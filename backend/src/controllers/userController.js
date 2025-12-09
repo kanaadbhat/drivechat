@@ -95,7 +95,7 @@ export const getDevices = asyncHandler(async (req, res) => {
  */
 export const createDevice = asyncHandler(async (req, res) => {
   const { userId } = req;
-  const { name, type } = req.body;
+  const { deviceId, name, type } = req.body;
 
   if (!name || !type) {
     return res.status(400).json({
@@ -104,7 +104,7 @@ export const createDevice = asyncHandler(async (req, res) => {
     });
   }
 
-  const validTypes = ['desktop', 'mobile', 'tablet', 'other'];
+  const validTypes = ['mobile', 'laptop', 'tablet', 'pc', 'guest'];
   if (!validTypes.includes(type)) {
     return res.status(400).json({
       error: 'Invalid device type',
@@ -120,15 +120,39 @@ export const createDevice = asyncHandler(async (req, res) => {
     });
   }
 
+  const devices = user.devices || [];
+
+  // Check if device already exists (by deviceId)
+  const existingDeviceIndex = deviceId ? devices.findIndex((d) => d.deviceId === deviceId) : -1;
+
+  if (existingDeviceIndex !== -1) {
+    // Update existing device
+    devices[existingDeviceIndex] = {
+      ...devices[existingDeviceIndex],
+      name,
+      type,
+      lastSeen: new Date().toISOString(),
+    };
+
+    await firestoreHelpers.setUserDoc(userId, { devices });
+
+    return res.json({
+      device: devices[existingDeviceIndex],
+      success: true,
+      updated: true,
+    });
+  }
+
+  // Create new device
   const newDevice = {
-    deviceId: nanoid(),
+    deviceId: deviceId || nanoid(),
     name,
     type,
+    isRegistered: true,
     lastSeen: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   };
 
-  const devices = user.devices || [];
   devices.push(newDevice);
 
   await firestoreHelpers.setUserDoc(userId, { devices });
@@ -136,6 +160,7 @@ export const createDevice = asyncHandler(async (req, res) => {
   res.status(201).json({
     device: newDevice,
     success: true,
+    updated: false,
   });
 });
 

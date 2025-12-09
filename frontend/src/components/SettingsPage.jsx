@@ -2,12 +2,30 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { ArrowLeft, HardDrive, User, Shield, Bell, Trash2 } from 'lucide-react';
+import {
+  ArrowLeft,
+  HardDrive,
+  User,
+  Shield,
+  Bell,
+  Trash2,
+  Plus,
+  Edit2,
+  Smartphone,
+} from 'lucide-react';
 import {
   checkGoogleConnection,
   saveClerkProviderTokens,
   revokeGoogleTokens,
 } from '../utils/driveAuth.js';
+import {
+  getCurrentDevice,
+  registerDevice,
+  detectDeviceType,
+  generateDefaultDeviceName,
+  getDeviceIcon,
+  DEVICE_TYPES,
+} from '../utils/deviceManager';
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
@@ -21,6 +39,11 @@ export default function SettingsPage() {
   const [googleConnected, setGoogleConnected] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
+  const [currentDevice, setCurrentDevice] = useState(null);
+  const [showAddDevice, setShowAddDevice] = useState(false);
+  const [newDeviceName, setNewDeviceName] = useState('');
+  const [newDeviceType, setNewDeviceType] = useState(DEVICE_TYPES.GUEST);
+  const [editingDevice, setEditingDevice] = useState(null);
 
   const fetchUserData = useCallback(async () => {
     try {
@@ -52,6 +75,9 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetchUserData();
+    // Load current device
+    const device = getCurrentDevice();
+    setCurrentDevice(device);
   }, [fetchUserData]);
 
   const removeDevice = async (deviceId) => {
@@ -68,6 +94,90 @@ export default function SettingsPage() {
     } catch (error) {
       console.error('Error removing device:', error);
       alert('Failed to remove device');
+    }
+  };
+
+  const handleAddCurrentDevice = async () => {
+    const device = getCurrentDevice();
+    const detectedType = detectDeviceType();
+    setNewDeviceType(detectedType);
+    setNewDeviceName(generateDefaultDeviceName(detectedType));
+    setShowAddDevice(true);
+  };
+
+  const handleSaveDevice = async () => {
+    if (!newDeviceName.trim()) {
+      setMessage({ type: 'error', text: 'Device name is required' });
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setMessage({ type: '', text: '' });
+
+      const token = await getToken();
+      if (!token) return;
+
+      const device = getCurrentDevice();
+
+      // Register device in backend
+      await axios.post(
+        `${API_URL}/api/users/devices`,
+        {
+          deviceId: device.deviceId,
+          name: newDeviceName,
+          type: newDeviceType,
+        },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      // Update local storage
+      const updatedDevice = registerDevice(newDeviceName, newDeviceType);
+      setCurrentDevice(updatedDevice);
+
+      setMessage({ type: 'success', text: 'Device registered successfully!' });
+      setShowAddDevice(false);
+      fetchUserData();
+    } catch (error) {
+      console.error('Error saving device:', error);
+      setMessage({
+        type: 'error',
+        text: error.response?.data?.error || 'Failed to save device',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleUpdateDevice = async (deviceId, newName) => {
+    if (!newName.trim()) return;
+
+    try {
+      const token = await getToken();
+      if (!token) return;
+
+      await axios.put(
+        `${API_URL}/api/users/devices/${deviceId}`,
+        { name: newName },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      // Update current device if it's the one being edited
+      if (currentDevice?.deviceId === deviceId) {
+        const updatedDevice = { ...currentDevice, name: newName };
+        setCurrentDevice(updatedDevice);
+        registerDevice(newName, currentDevice.type);
+      }
+
+      setEditingDevice(null);
+      fetchUserData();
+    } catch (error) {
+      console.error('Error updating device:', error);
+      alert('Failed to update device');
     }
   };
 
@@ -366,33 +476,173 @@ export default function SettingsPage() {
 
             {/* Devices Section */}
             <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-              <div className="flex items-center gap-3 mb-6">
-                <Bell className="w-5 h-5 text-purple-400" />
-                <h2 className="text-xl font-semibold text-white">Devices</h2>
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <Smartphone className="w-5 h-5 text-purple-400" />
+                  <h2 className="text-xl font-semibold text-white">Devices</h2>
+                </div>
+                <button
+                  onClick={handleAddCurrentDevice}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 rounded-lg transition-colors text-sm font-medium"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add This Device
+                </button>
               </div>
-              {devices.length === 0 ? (
-                <p className="text-gray-400 text-center py-4">No devices registered</p>
-              ) : (
-                <div className="space-y-3">
-                  {devices.map((device) => (
-                    <div
-                      key={device.id}
-                      className="flex items-center justify-between p-4 bg-gray-800 rounded-lg"
-                    >
-                      <div>
-                        <p className="text-white font-medium">{device.name || device.deviceId}</p>
-                        <p className="text-sm text-gray-400">
-                          Last active: {new Date(device.lastActive).toLocaleString()}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => removeDevice(device.id)}
-                        className="p-2 text-red-400 hover:text-red-300 hover:bg-gray-700 rounded-lg transition-colors"
+
+              {/* Current Device Info */}
+              {currentDevice && (
+                <div className="mb-4 p-4 bg-linear-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/20 rounded-lg">
+                  <p className="text-xs text-purple-400 mb-2 font-semibold">CURRENT DEVICE</p>
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-full bg-purple-600/20 flex items-center justify-center border-2 border-purple-500/30">
+                      <img
+                        src={getDeviceIcon(currentDevice.type)}
+                        alt={currentDevice.type}
+                        className="w-6 h-6"
+                      />
+                    </div>
+                    <div>
+                      <p className="text-white font-medium">{currentDevice.name}</p>
+                      <p className="text-sm text-gray-400 capitalize">
+                        {currentDevice.type}
+                        {!currentDevice.isRegistered && (
+                          <span className="ml-2 text-xs text-yellow-400">(Not Registered)</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Add Device Modal */}
+              {showAddDevice && (
+                <div className="mb-4 p-4 bg-gray-800 border border-gray-700 rounded-lg">
+                  <h3 className="text-white font-medium mb-3">Register Current Device</h3>
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-1">Device Name</label>
+                      <input
+                        type="text"
+                        value={newDeviceName}
+                        onChange={(e) => setNewDeviceName(e.target.value)}
+                        placeholder="My Laptop"
+                        className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-purple-500 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-1">Device Type</label>
+                      <select
+                        value={newDeviceType}
+                        onChange={(e) => setNewDeviceType(e.target.value)}
+                        className="w-full px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-purple-500 focus:outline-none"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <option value={DEVICE_TYPES.MOBILE}>Mobile</option>
+                        <option value={DEVICE_TYPES.LAPTOP}>Laptop</option>
+                        <option value={DEVICE_TYPES.TABLET}>Tablet</option>
+                        <option value={DEVICE_TYPES.PC}>PC</option>
+                        <option value={DEVICE_TYPES.GUEST}>Guest</option>
+                      </select>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleSaveDevice}
+                        disabled={loading}
+                        className="flex-1 px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => setShowAddDevice(false)}
+                        className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors"
+                      >
+                        Cancel
                       </button>
                     </div>
-                  ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Registered Devices List */}
+              {devices.length === 0 ? (
+                <p className="text-gray-400 text-center py-4">
+                  No devices registered. Add this device to get started!
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {devices.map((device) => {
+                    const isCurrentDevice = device.deviceId === currentDevice?.deviceId;
+                    return (
+                      <div
+                        key={device.deviceId}
+                        className={`flex items-center justify-between p-4 rounded-lg ${
+                          isCurrentDevice
+                            ? 'bg-purple-500/10 border border-purple-500/30'
+                            : 'bg-gray-800'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                              isCurrentDevice ? 'bg-purple-600/20' : 'bg-gray-700'
+                            }`}
+                          >
+                            <img
+                              src={getDeviceIcon(device.type)}
+                              alt={device.type}
+                              className="w-5 h-5"
+                            />
+                          </div>
+                          <div>
+                            {editingDevice === device.deviceId ? (
+                              <input
+                                type="text"
+                                defaultValue={device.name}
+                                onBlur={(e) => handleUpdateDevice(device.deviceId, e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    handleUpdateDevice(device.deviceId, e.target.value);
+                                  }
+                                  if (e.key === 'Escape') {
+                                    setEditingDevice(null);
+                                  }
+                                }}
+                                autoFocus
+                                className="px-2 py-1 bg-gray-700 text-white rounded border border-gray-600 focus:border-purple-500 focus:outline-none"
+                              />
+                            ) : (
+                              <p className="text-white font-medium">
+                                {device.name || device.deviceId}
+                                {isCurrentDevice && (
+                                  <span className="ml-2 text-xs text-purple-400">
+                                    (This Device)
+                                  </span>
+                                )}
+                              </p>
+                            )}
+                            <p className="text-sm text-gray-400 capitalize">
+                              {device.type} • Last seen:{' '}
+                              {new Date(device.lastSeen).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setEditingDevice(device.deviceId)}
+                            className="p-2 text-blue-400 hover:text-blue-300 hover:bg-gray-700 rounded-lg transition-colors"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => removeDevice(device.deviceId)}
+                            className="p-2 text-red-400 hover:text-red-300 hover:bg-gray-700 rounded-lg transition-colors"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

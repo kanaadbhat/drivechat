@@ -52,15 +52,24 @@ export const createMessage = asyncHandler(async (req, res) => {
     mimeType,
     fileCategory,
     filePreviewUrl,
+    sender,
+    // Legacy support for old client versions
     deviceId,
     deviceName,
   } = req.body;
 
+  // Use sender object if provided, otherwise fallback to legacy deviceId/deviceName
+  const senderData = sender || {
+    deviceId: deviceId,
+    deviceName: deviceName,
+    deviceType: 'guest',
+  };
+
   // Validate required fields
-  if (!type || !deviceId || !deviceName) {
+  if (!type || !senderData.deviceId || !senderData.deviceName) {
     return res.status(400).json({
       error: 'Missing required fields',
-      required: ['type', 'deviceId', 'deviceName'],
+      required: ['type', 'sender.deviceId', 'sender.deviceName'],
     });
   }
 
@@ -80,8 +89,9 @@ export const createMessage = asyncHandler(async (req, res) => {
   const messageData = {
     type,
     sender: {
-      deviceId,
-      deviceName,
+      deviceId: senderData.deviceId,
+      deviceName: senderData.deviceName,
+      deviceType: senderData.deviceType || 'guest',
     },
     timestamp: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours

@@ -29,4 +29,7 @@ router.delete('/devices/:deviceId', asyncHandler(userController.deleteDevice));
 // Get user analytics
 router.get('/analytics', asyncHandler(userController.getAnalytics));
 
+// Delete user account (must be after other routes)
+router.delete('/me', asyncHandler(userController.deleteAccount));
+
 export default router;

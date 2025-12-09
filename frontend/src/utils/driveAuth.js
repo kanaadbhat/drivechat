@@ -14,7 +14,7 @@ export const saveClerkProviderTokens = async (getToken) => {
     }
 
     const response = await axios.post(
-      `${API_URL}/api/auth/clerk/save-provider-tokens`,
+      `${API_URL}/api/authentication/clerk/save-tokens`,
       {},
       {
         headers: { Authorization: `Bearer ${token}` },
@@ -45,7 +45,7 @@ export const saveProviderTokensFromClient = async (
     }
 
     const response = await axios.post(
-      `${API_URL}/api/auth/save-provider-tokens`,
+      `${API_URL}/api/authentication/save-tokens`,
       {
         accessToken,
         refreshToken,
@@ -73,7 +73,7 @@ export const checkGoogleConnection = async (getToken) => {
       throw new Error('Not authenticated');
     }
 
-    const response = await axios.get(`${API_URL}/api/auth/google/check`, {
+    const response = await axios.get(`${API_URL}/api/authentication/google/check`, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
@@ -94,7 +94,7 @@ export const getStoredGoogleTokens = async (getToken) => {
       throw new Error('Not authenticated');
     }
 
-    const response = await axios.get(`${API_URL}/api/auth/google/tokens`, {
+    const response = await axios.get(`${API_URL}/api/authentication/google/tokens`, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
@@ -115,7 +115,7 @@ export const revokeGoogleTokens = async (getToken) => {
       throw new Error('Not authenticated');
     }
 
-    const response = await axios.delete(`${API_URL}/api/auth/google/revoke`, {
+    const response = await axios.delete(`${API_URL}/api/authentication/google/revoke`, {
       headers: { Authorization: `Bearer ${token}` },
     });
 

@@ -1,5 +1,7 @@
 import { firestoreHelpers, admin } from '../config/firebase.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { getOAuthClientForUser } from '../utils/googleAuth.js';
+import { google } from 'googleapis';
 // Queue system is disabled for now
 // import { scheduleMessageDeletion, cancelMessageDeletion } from '../queues/cleanupQueue.js';
 
@@ -200,16 +202,29 @@ export const deleteMessage = asyncHandler(async (req, res) => {
     });
   }
 
+  // If it's a file message, delete from Google Drive first
+  if (message.type === 'file' && message.fileId) {
+    try {
+      console.log(`[deleteMessage] Deleting file ${message.fileId} from Google Drive...`);
+      const oauth2Client = await getOAuthClientForUser(userId);
+      const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+      await drive.files.delete({ fileId: message.fileId });
+      console.log(`[deleteMessage] ✅ File ${message.fileId} deleted from Drive`);
+    } catch (driveError) {
+      console.error(`[deleteMessage] ⚠️ Failed to delete file from Drive:`, driveError.message);
+      // Continue with message deletion even if Drive deletion fails
+      // The file might already be deleted or user lost access
+    }
+  }
+
   // Delete from Firestore
   await firestoreHelpers.deleteMessage(userId, id);
-
-  // Note: File deletion from Drive should be handled separately
-  // via the files controller or cleanup service
 
   res.json({
     success: true,
     message: 'Message deleted',
-    fileId: message.type === 'file' ? message.fileId : null,
+    fileDeleted: message.type === 'file' ? true : false,
   });
 });
 
@@ -266,5 +281,113 @@ export const getMessagesByCategory = asyncHandler(async (req, res) => {
     messages,
     count: messages.length,
     category,
+  });
+});
+
+/**
+ * Delete all messages for the authenticated user
+ * Deletes files from Google Drive and all messages from Firestore
+ */
+export const deleteAllMessages = asyncHandler(async (req, res) => {
+  const { userId } = req;
+
+  console.log(`[deleteAllMessages] Starting bulk delete for user: ${userId}`);
+
+  // Get all messages for the user
+  const messages = await firestoreHelpers.getUserMessages(userId, 10000); // Get all messages
+
+  let filesDeleted = 0;
+  let filesFailed = 0;
+
+  // Delete files from Google Drive first
+  const fileMessages = messages.filter((msg) => msg.type === 'file' && msg.fileId);
+
+  if (fileMessages.length > 0) {
+    try {
+      const oauth2Client = await getOAuthClientForUser(userId);
+      const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+      console.log(`[deleteAllMessages] Deleting ${fileMessages.length} files from Google Drive...`);
+
+      // Delete files in parallel with error handling for each
+      await Promise.allSettled(
+        fileMessages.map(async (msg) => {
+          try {
+            await drive.files.delete({ fileId: msg.fileId });
+            filesDeleted++;
+            console.log(`[deleteAllMessages] ✅ Deleted file: ${msg.fileId}`);
+          } catch (error) {
+            filesFailed++;
+            console.error(
+              `[deleteAllMessages] ⚠️ Failed to delete file ${msg.fileId}:`,
+              error.message
+            );
+          }
+        })
+      );
+    } catch (driveError) {
+      console.error(`[deleteAllMessages] ⚠️ Drive API error:`, driveError.message);
+      // Continue with Firestore deletion even if Drive fails
+    }
+  }
+
+  // Delete all messages from Firestore
+  console.log(`[deleteAllMessages] Deleting ${messages.length} messages from Firestore...`);
+  const deletePromises = messages.map((msg) => firestoreHelpers.deleteMessage(userId, msg.id));
+  await Promise.all(deletePromises);
+
+  // Reset user analytics
+  await firestoreHelpers.updateUserAnalytics(userId, {
+    totalMessagesCount: 0,
+    totalFilesCount: 0,
+    storageUsedBytes: 0,
+  });
+
+  console.log(`[deleteAllMessages] ✅ Bulk delete complete`);
+
+  res.json({
+    success: true,
+    messagesDeleted: messages.length,
+    filesDeleted,
+    filesFailed,
+  });
+});
+
+/**
+ * Unstar all starred messages for the authenticated user
+ */
+export const unstarAllMessages = asyncHandler(async (req, res) => {
+  const { userId } = req;
+
+  console.log(`[unstarAllMessages] Starting for user: ${userId}`);
+
+  // Get all starred messages
+  const starredMessages = await firestoreHelpers.getStarredMessages(userId);
+
+  if (starredMessages.length === 0) {
+    return res.json({
+      success: true,
+      messagesUnstarred: 0,
+      message: 'No starred messages to unstar',
+    });
+  }
+
+  console.log(`[unstarAllMessages] Unstarring ${starredMessages.length} messages...`);
+
+  // Unstar all messages
+  const updatePromises = starredMessages.map((msg) =>
+    firestoreHelpers.updateMessage(userId, msg.id, {
+      starred: false,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Set 24h expiry
+    })
+  );
+
+  await Promise.all(updatePromises);
+
+  console.log(`[unstarAllMessages] ✅ Complete`);
+
+  res.json({
+    success: true,
+    messagesUnstarred: starredMessages.length,
   });
 });

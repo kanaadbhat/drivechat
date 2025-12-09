@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { ArrowLeft, HardDrive, User, Shield, Bell, Trash2 } from 'lucide-react';
 import {
   checkGoogleConnection,
   saveClerkProviderTokens,
@@ -113,6 +114,127 @@ export default function SettingsPage() {
     }
   };
 
+  const handleClearAllMessages = async () => {
+    if (
+      !confirm(
+        '⚠️ DELETE ALL MESSAGES?\n\nThis will permanently delete ALL your messages and files from both Google Drive and our database.\n\nThis action CANNOT be undone.\n\nAre you sure?'
+      )
+    )
+      return;
+
+    try {
+      setLoading(true);
+      setMessage({ type: '', text: '' });
+
+      const token = await getToken();
+      if (!token) return;
+
+      const response = await axios.delete(`${API_URL}/api/messages/all`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      setMessage({
+        type: 'success',
+        text: `Successfully deleted ${response.data.messagesDeleted} messages and ${response.data.filesDeleted} files.`,
+      });
+
+      // Refresh analytics
+      fetchUserData();
+    } catch (error) {
+      console.error('Error clearing messages:', error);
+      setMessage({
+        type: 'error',
+        text: error.response?.data?.error || 'Failed to clear messages',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    // First confirmation
+    if (
+      !confirm(
+        '⚠️ DELETE ACCOUNT?\n\nThis will permanently delete:\n• Your entire account\n• All messages and files\n• All data from Google Drive\n• All settings and preferences\n\nThis action CANNOT be undone.\n\nAre you absolutely sure?'
+      )
+    )
+      return;
+
+    // Second confirmation
+    const confirmText = prompt(
+      'Type "DELETE MY ACCOUNT" (in all caps) to confirm permanent account deletion:'
+    );
+
+    if (confirmText !== 'DELETE MY ACCOUNT') {
+      alert('Account deletion cancelled.');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setMessage({ type: '', text: '' });
+
+      const token = await getToken();
+      if (!token) return;
+
+      await axios.delete(`${API_URL}/api/users/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      // Sign out and redirect to home
+      alert('Your account has been permanently deleted.');
+      window.location.href = '/';
+    } catch (error) {
+      console.error('Error deleting account:', error);
+      setMessage({
+        type: 'error',
+        text: error.response?.data?.error || 'Failed to delete account',
+      });
+      setLoading(false);
+    }
+  };
+
+  const handleUnstarAll = async () => {
+    if (
+      !confirm(
+        '⚠️ UNSTAR ALL MESSAGES?\n\nThis will remove the star from ALL your starred messages.\n\nUnstarred messages will expire in 24 hours.\n\nAre you sure?'
+      )
+    )
+      return;
+
+    try {
+      setLoading(true);
+      setMessage({ type: '', text: '' });
+
+      const token = await getToken();
+      if (!token) return;
+
+      const response = await axios.patch(
+        `${API_URL}/api/messages/unstar-all`,
+        {},
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      setMessage({
+        type: 'success',
+        text: `Successfully unstarred ${response.data.messagesUnstarred} messages.`,
+      });
+
+      // Refresh analytics
+      fetchUserData();
+    } catch (error) {
+      console.error('Error unstarring messages:', error);
+      setMessage({
+        type: 'error',
+        text: error.response?.data?.error || 'Failed to unstar messages',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-950">
       {/* Header */}
@@ -217,24 +339,24 @@ export default function SettingsPage() {
                   <Shield className="w-5 h-5 text-green-400" />
                   <h2 className="text-xl font-semibold text-white">Usage Statistics</h2>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                   <div className="bg-gray-800 rounded-lg p-4">
                     <p className="text-gray-400 text-sm">Total Messages</p>
-                    <p className="text-white text-2xl font-bold">{analytics.totalMessages || 0}</p>
-                  </div>
-                  <div className="bg-gray-800 rounded-lg p-4">
-                    <p className="text-gray-400 text-sm">Files Shared</p>
-                    <p className="text-white text-2xl font-bold">{analytics.totalFiles || 0}</p>
+                    <p className="text-white text-2xl font-bold">
+                      {analytics.analytics?.totalMessagesCount || 0}
+                    </p>
                   </div>
                   <div className="bg-gray-800 rounded-lg p-4">
                     <p className="text-gray-400 text-sm">Starred</p>
-                    <p className="text-white text-2xl font-bold">{analytics.starredCount || 0}</p>
+                    <p className="text-white text-2xl font-bold">
+                      {analytics.analytics?.starredCount || 0}
+                    </p>
                   </div>
                   <div className="bg-gray-800 rounded-lg p-4">
                     <p className="text-gray-400 text-sm">Storage Used</p>
                     <p className="text-white text-2xl font-bold">
-                      {analytics.storageUsed
-                        ? `${(analytics.storageUsed / 1024 / 1024).toFixed(1)} MB`
+                      {analytics.analytics?.storageUsedBytes
+                        ? `${(analytics.analytics.storageUsedBytes / 1024 / 1024).toFixed(1)} MB`
                         : '0 MB'}
                     </p>
                   </div>
@@ -278,12 +400,54 @@ export default function SettingsPage() {
             {/* Danger Zone */}
             <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-6">
               <h2 className="text-xl font-semibold text-red-400 mb-4">Danger Zone</h2>
-              <p className="text-gray-400 mb-4">
-                Once you delete your account, there is no going back. Please be certain.
-              </p>
-              <button className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg transition-colors">
-                Delete Account
-              </button>
+
+              {/* Unstar All Messages */}
+              <div className="mb-6 pb-6 border-b border-red-500/20">
+                <p className="text-gray-400 mb-2 font-medium">Unstar All Messages</p>
+                <p className="text-sm text-gray-500 mb-4">
+                  Remove stars from all starred messages. Unstarred messages will expire in 24
+                  hours.
+                </p>
+                <button
+                  onClick={handleUnstarAll}
+                  disabled={loading}
+                  className="px-4 py-2 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  Unstar All Messages
+                </button>
+              </div>
+
+              {/* Clear All Messages */}
+              <div className="mb-6 pb-6 border-b border-red-500/20">
+                <p className="text-gray-400 mb-2 font-medium">Clear All Messages</p>
+                <p className="text-sm text-gray-500 mb-4">
+                  Permanently delete all your messages and files. This will remove files from Google
+                  Drive and all message data.
+                </p>
+                <button
+                  onClick={handleClearAllMessages}
+                  disabled={loading}
+                  className="px-4 py-2 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  Clear All Messages
+                </button>
+              </div>
+
+              {/* Delete Account */}
+              <div>
+                <p className="text-gray-400 mb-2 font-medium">Delete Account</p>
+                <p className="text-sm text-gray-500 mb-4">
+                  Once you delete your account, there is no going back. This will delete all your
+                  data, messages, files, and settings permanently.
+                </p>
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={loading}
+                  className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  Delete Account Permanently
+                </button>
+              </div>
             </div>
           </div>
         )}

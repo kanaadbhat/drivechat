@@ -274,7 +274,7 @@ export default function ChatInterface() {
           if (!googleToken) {
             console.warn('   - ❌ No Google token available');
             alert(
-              'Please connect Google Drive first.\n\nClick the "Connect Google Drive" button in the sidebar.'
+              'Please connect Google Drive first.\n\nGo to Settings to connect your Google Drive account.'
             );
             setIsSending(false);
             return;
@@ -688,14 +688,6 @@ export default function ChatInterface() {
               <Settings className="w-4 h-4" />
               Settings
             </button>
-            {googleConnected && (
-              <button
-                onClick={checkGoogleConnection}
-                className="w-full px-4 py-2 text-left text-green-400 hover:text-green-300 hover:bg-green-900/20 rounded-lg transition-colors flex items-center gap-3 text-xs"
-              >
-                ✅ Google Drive Connected
-              </button>
-            )}
             <button
               onClick={() => {
                 console.log('=== FULL DEBUG INFO ===');

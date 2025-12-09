@@ -170,6 +170,13 @@ export const firestoreHelpers = {
       ...updates,
     });
   },
+
+  // Delete user document (for account deletion)
+  async deleteUserDoc(uid) {
+    const userRef = db.collection('users').doc(uid);
+    await userRef.delete();
+    return { id: uid };
+  },
 };
 
 export { db, admin };

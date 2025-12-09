@@ -17,6 +17,12 @@ router.get('/search', asyncHandler(messageController.searchMessages));
 // Get messages by category
 router.get('/category/:category', asyncHandler(messageController.getMessagesByCategory));
 
+// Delete all messages (must be before /:id route)
+router.delete('/all', asyncHandler(messageController.deleteAllMessages));
+
+// Unstar all starred messages
+router.patch('/unstar-all', asyncHandler(messageController.unstarAllMessages));
+
 // Get single message
 router.get('/:id', asyncHandler(messageController.getMessage));
 

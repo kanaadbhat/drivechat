@@ -1,24 +1,23 @@
 import logger from '../utils/logger.js';
 
-// Import preview queue system
+// Import all queue systems
 import { previewQueue, previewWorker } from './previewQueue.js';
+import { cleanupQueue, cleanupWorker, setupPeriodicCleanup } from './cleanupQueue.js';
+import { fileQueue, fileWorker } from './fileQueue.js';
 
-// Export preview queue and related functions
+// Export all queues and workers
 export { previewQueue, previewWorker };
-export { queuePreviewGeneration, getPreviewJobStatus } from './previewQueue.js';
+export { cleanupQueue, cleanupWorker };
+export { fileQueue, fileWorker };
 
-// Queue system imports and exports are disabled due to Redis connection issues
-// import { cleanupQueue, cleanupWorker, setupPeriodicCleanup } from './cleanupQueue.js';
-// import { fileQueue, fileWorker } from './fileQueue.js';
-// import { aiQueue, aiWorker } from './aiQueue.js';
-// export { cleanupQueue, cleanupWorker, fileQueue, fileWorker, aiQueue, aiWorker };
-// export {
-//   scheduleMessageDeletion,
-//   cancelMessageDeletion,
-//   triggerImmediateCleanup,
-// } from './cleanupQueue.js';
-// export { queueFileUpload, queueFileDelete, queueBatchFileDelete } from './fileQueue.js';
-// export { queueAISummarization, queueAIAnalysis } from './aiQueue.js';
+// Export queue functions
+export { queuePreviewGeneration, getPreviewJobStatus } from './previewQueue.js';
+export {
+  scheduleMessageDeletion,
+  cancelMessageDeletion,
+  triggerImmediateCleanup,
+} from './cleanupQueue.js';
+export { queueFileUpload, queueFileDelete, queueBatchFileDelete } from './fileQueue.js';
 
 /**
  * Initialize all queues and workers
@@ -27,13 +26,15 @@ export async function initializeQueues() {
   try {
     logger.info('🚀 Initializing queue system...');
 
-    // Preview queue worker is automatically started when imported
+    // All queue workers are automatically started when imported
     logger.info('✅ Preview queue worker initialized');
-    logger.info('Active queues: preview-generation');
+    logger.info('✅ Cleanup queue worker initialized');
+    logger.info('✅ File queue worker initialized');
 
-    // Other queues disabled due to Redis connection issues
-    // await setupPeriodicCleanup();
+    // Setup periodic cleanup tasks
+    await setupPeriodicCleanup();
 
+    logger.info('Active queues: preview-generation, cleanup, file-operations');
     logger.success('✅ Queue system initialized successfully');
   } catch (error) {
     logger.error('❌ Failed to initialize queue system:', error);
@@ -48,19 +49,15 @@ export async function shutdownQueues() {
   logger.info('Shutting down queue system...');
   const shutdownPromises = [];
 
+  // Close all workers
   if (previewWorker) shutdownPromises.push(previewWorker.close());
+  if (cleanupWorker) shutdownPromises.push(cleanupWorker.close());
+  if (fileWorker) shutdownPromises.push(fileWorker.close());
 
-  // Other workers disabled
-  // if (cleanupWorker) shutdownPromises.push(cleanupWorker.close());
-  // if (fileWorker) shutdownPromises.push(fileWorker.close());
-  // if (aiWorker) shutdownPromises.push(aiWorker.close());
-
+  // Close all queues
   if (previewQueue) shutdownPromises.push(previewQueue.close());
-
-  // Other queues disabled
-  // if (cleanupQueue) shutdownPromises.push(cleanupQueue.close());
-  // if (fileQueue) shutdownPromises.push(fileQueue.close());
-  // if (aiQueue) shutdownPromises.push(aiQueue.close());
+  if (cleanupQueue) shutdownPromises.push(cleanupQueue.close());
+  if (fileQueue) shutdownPromises.push(fileQueue.close());
 
   await Promise.all(shutdownPromises);
   logger.success('✅ Queue system shutdown complete');

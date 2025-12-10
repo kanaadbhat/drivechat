@@ -38,6 +38,18 @@ export async function persistTokensForUser(userId, tokens) {
     .set(update, { merge: true });
 
   console.log(`[DEBUG]   ✅ Firestore save complete`);
+  try {
+    await db.collection('users').doc(userId).set(
+      {
+        driveConnected: true,
+        lastActive: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+    console.log('[DEBUG]   ✅ Updated user driveConnected flag');
+  } catch (err) {
+    console.error('[DEBUG]   ⚠️ Failed to update user driveConnected flag:', err.message);
+  }
 }
 
 export async function getStoredTokens(userId) {

@@ -5,9 +5,8 @@ import logger from '../utils/logger.js';
 // Queue name
 const QUEUE_NAME = 'cleanup';
 
-// Queue system is disabled
-// export const cleanupQueue = createQueue(QUEUE_NAME);
-export const cleanupQueue = null;
+// Create the cleanup queue
+export const cleanupQueue = createQueue(QUEUE_NAME);
 
 /**
  * Job processor for cleanup tasks
@@ -35,11 +34,14 @@ async function processCleanupJob(job) {
   }
 }
 
-// Queue system is disabled
-// export const cleanupWorker = createWorker(QUEUE_NAME, processCleanupJob, {
-//   concurrency: 2, // Process 2 cleanup jobs at a time
-// });
-export const cleanupWorker = null;
+// Create the cleanup worker
+export const cleanupWorker = createWorker(QUEUE_NAME, processCleanupJob, {
+  concurrency: 2, // Process 2 cleanup jobs at a time
+  limiter: {
+    max: 5,
+    duration: 1000, // Max 5 jobs per second
+  },
+});
 
 /**
  * Schedule a message for auto-deletion

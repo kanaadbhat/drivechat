@@ -1,8 +1,9 @@
 import { google } from 'googleapis';
 import { getFileCategory } from '../utils/fileUtils.js';
-import { getOAuthClientForUser, clearStoredTokens } from '../utils/googleAuth.js';
+import { getOAuthClientForUser, clearStoredTokens, getStoredTokens } from '../utils/googleAuth.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { queuePreviewGeneration } from '../queues/previewQueue.js';
+import { queueFileUpload, queueFileDelete } from '../queues/fileQueue.js';
 import multer from 'multer';
 import { Readable } from 'stream';
 
@@ -24,6 +25,7 @@ export const uploadFile = asyncHandler(async (req, res) => {
   try {
     const { userId } = req;
     const file = req.file;
+    const useQueue = req.body.useQueue === true || req.query.useQueue === 'true';
 
     console.log(`\n[DEBUG] [uploadFile] START`);
     console.log(`[DEBUG]   userId: ${userId}`);
@@ -39,6 +41,33 @@ export const uploadFile = asyncHandler(async (req, res) => {
     console.log(
       `[DEBUG]   📤 Uploading file: ${file.originalname} (${file.size} bytes, ${file.mimetype})`
     );
+
+    // Optional: queue-based upload (returns jobId, does not return immediate fileId)
+    if (useQueue) {
+      console.log(`[DEBUG]   🧭 useQueue=true, queueing file upload job...`);
+      const tokens = await getStoredTokens(userId);
+      if (!tokens || !tokens.accessToken) {
+        return res.status(401).json({
+          error: 'No Google tokens found. Please connect Google Drive.',
+        });
+      }
+
+      const job = await queueFileUpload({
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        userId,
+        fileName: file.originalname,
+        fileData: file.buffer.toString('base64'),
+        mimeType: file.mimetype,
+      });
+
+      return res.json({
+        success: true,
+        queued: true,
+        jobId: job.id,
+        message: 'File upload queued',
+      });
+    }
 
     // Get OAuth client with auto token refresh
     console.log(`[DEBUG]   Getting OAuth client...`);
@@ -202,12 +231,31 @@ export const uploadFile = asyncHandler(async (req, res) => {
 export const uploadFileWithOAuth = asyncHandler(async (req, res) => {
   try {
     const { userId } = req;
-    const { accessToken, fileName, fileData, mimeType } = req.body;
+    const { accessToken, refreshToken, fileName, fileData, mimeType, useQueue = true } = req.body;
 
     if (!accessToken || !fileName || !fileData) {
       return res.status(400).json({
         error: 'Missing required fields',
         required: ['accessToken', 'fileName', 'fileData'],
+      });
+    }
+
+    // Prefer async processing through the file queue
+    if (useQueue) {
+      const job = await queueFileUpload({
+        accessToken,
+        refreshToken,
+        userId,
+        fileName,
+        fileData,
+        mimeType,
+      });
+
+      return res.json({
+        success: true,
+        queued: true,
+        jobId: job.id,
+        message: 'File upload queued',
       });
     }
 
@@ -356,11 +404,28 @@ export const deleteFile = asyncHandler(async (req, res) => {
   try {
     const { userId } = req;
     const { fileId } = req.params;
-    const { accessToken } = req.body;
+    const { accessToken, refreshToken, useQueue = true } = req.body;
 
     if (!accessToken) {
       return res.status(400).json({
         error: 'Access token is required',
+      });
+    }
+
+    // Prefer async deletion via file queue
+    if (useQueue) {
+      const job = await queueFileDelete({
+        accessToken,
+        refreshToken,
+        userId,
+        fileId,
+      });
+
+      return res.json({
+        success: true,
+        queued: true,
+        jobId: job.id,
+        message: 'File deletion queued',
       });
     }
 

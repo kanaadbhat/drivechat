@@ -2,6 +2,7 @@
 // Handles Clerk authentication and basic token operations
 
 import { asyncHandler } from '../utils/asyncHandler.js';
+import { firestoreHelpers } from '../config/firebase.js';
 import {
   persistTokensForUser,
   getStoredTokens,
@@ -138,6 +139,16 @@ export const checkGoogleConnection = asyncHandler(async (req, res) => {
   const hasRefreshToken = !!(td && (td.refreshToken || td.refresh_token));
   const needsAuthorization = !connected || !hasRefreshToken;
 
+  // Persist connection flag on user doc for frontend UI
+  try {
+    await firestoreHelpers.setUserDoc(userId, {
+      driveConnected: connected && hasRefreshToken,
+      lastActive: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[checkGoogleConnection] Failed to update user doc:', err.message);
+  }
+
   console.log('   - Final status: ' + (connected ? '✅ CONNECTED' : '❌ NOT CONNECTED'));
   console.log('   - Has refresh token:', hasRefreshToken ? '✅' : '❌');
   console.log('   - Needs authorization:', needsAuthorization ? '⚠️  YES' : '❌ NO');
@@ -146,6 +157,7 @@ export const checkGoogleConnection = asyncHandler(async (req, res) => {
     connected,
     hasRefreshToken,
     needsAuthorization, // Flag to show if user needs to complete OAuth flow
+    driveConnected: connected && hasRefreshToken,
   });
 });
 

@@ -1,4 +1,6 @@
 import { firestoreHelpers } from '../config/firebase.js';
+import { getOAuthClientForUser } from '../utils/googleAuth.js';
+import { google } from 'googleapis';
 import logger from '../utils/logger.js';
 
 /**
@@ -21,6 +23,7 @@ export const cleanupExpiredMessages = async (options = {}) => {
           totalExpired: 0,
           deletedCount: 0,
           errorCount: 0,
+          driveFilesDeleted: 0,
           timestamp: new Date().toISOString(),
         };
       }
@@ -41,6 +44,7 @@ export const cleanupExpiredMessages = async (options = {}) => {
           totalExpired: 0,
           deletedCount: 0,
           errorCount: 0,
+          driveFilesDeleted: 0,
           timestamp: new Date().toISOString(),
         };
       }
@@ -53,22 +57,48 @@ export const cleanupExpiredMessages = async (options = {}) => {
 
     let deletedCount = 0;
     let errorCount = 0;
+    let driveFilesDeleted = 0;
     const errors = [];
     const deletedFileIds = [];
 
     for (const msg of expiredMessages) {
       try {
+        // If it's a file message, delete from Google Drive first (folder-aware)
+        if (msg.type === 'file' && msg.fileId) {
+          try {
+            const oauth2Client = await getOAuthClientForUser(msg.uid);
+            const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+            if (msg.fileFolderId) {
+              logger.info(`[cleanupService] Deleting folder ${msg.fileFolderId} from Drive...`);
+              await drive.files.delete({ fileId: msg.fileFolderId });
+              driveFilesDeleted++;
+              logger.success(
+                `[cleanupService] ✅ Deleted folder: ${msg.fileFolderId} (${msg.fileName})`
+              );
+            } else {
+              logger.info(`[cleanupService] Deleting file ${msg.fileId} from Drive...`);
+              await drive.files.delete({ fileId: msg.fileId });
+              driveFilesDeleted++;
+              logger.success(`[cleanupService] ✅ Deleted file: ${msg.fileId}`);
+            }
+          } catch (driveError) {
+            logger.warn(`[cleanupService] ⚠️ Failed to delete from Drive: ${driveError.message}`);
+            // Continue with message deletion even if Drive deletion fails
+          }
+        }
+
         // Delete message from Firestore
         await firestoreHelpers.deleteMessage(msg.uid, msg.messageId);
 
         deletedCount++;
         logger.success(`✅ Deleted message ${msg.messageId} for user ${msg.uid}`);
 
-        // Track file IDs for potential cleanup
         if (msg.type === 'file' && msg.fileId) {
           deletedFileIds.push({
             uid: msg.uid,
             fileId: msg.fileId,
+            fileFolderId: msg.fileFolderId,
             messageId: msg.messageId,
           });
         }
@@ -86,12 +116,15 @@ export const cleanupExpiredMessages = async (options = {}) => {
       totalExpired: expiredMessages.length,
       deletedCount,
       errorCount,
+      driveFilesDeleted,
       deletedFileIds,
       errors: errors.length > 0 ? errors : undefined,
       timestamp: new Date().toISOString(),
     };
 
-    logger.info(`🧹 Cleanup completed: ${deletedCount} deleted, ${errorCount} errors`);
+    logger.info(
+      `🧹 Cleanup completed: ${deletedCount} messages deleted, ${driveFilesDeleted} drive files/folders deleted, ${errorCount} errors`
+    );
 
     return result;
   } catch (error) {

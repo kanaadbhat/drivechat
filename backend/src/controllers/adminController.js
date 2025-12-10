@@ -1,5 +1,5 @@
-// import { triggerImmediateCleanup } from '../queues/cleanupQueue.js';
-// import { cleanupQueue, fileQueue, aiQueue } from '../queues/index.js';
+import { triggerImmediateCleanup } from '../queues/cleanupQueue.js';
+import { cleanupQueue, fileQueue, previewQueue } from '../queues/index.js';
 
 import { asyncHandler } from '../utils/asyncHandler.js';
 
@@ -7,10 +7,12 @@ import { asyncHandler } from '../utils/asyncHandler.js';
  * Manually trigger cleanup of expired messages
  */
 export const triggerCleanup = asyncHandler(async (req, res) => {
-  // Queue system is disabled
-  res.status(503).json({
-    error: 'Queue system is disabled',
-    message: 'Manual cleanup is unavailable while queues are disabled.',
+  const job = await triggerImmediateCleanup();
+
+  res.json({
+    success: true,
+    message: 'Cleanup job triggered',
+    jobId: job.id,
   });
 });
 
@@ -18,10 +20,18 @@ export const triggerCleanup = asyncHandler(async (req, res) => {
  * Get cleanup statistics
  */
 export const getCleanupStats = asyncHandler(async (req, res) => {
-  // Queue system is disabled
-  res.status(503).json({
-    error: 'Queue system is disabled',
-    message: 'Cleanup stats are unavailable while queues are disabled.',
+  const [cleanupCounts, fileCounts, previewCounts] = await Promise.all([
+    cleanupQueue.getJobCounts(),
+    fileQueue.getJobCounts(),
+    previewQueue.getJobCounts(),
+  ]);
+
+  res.json({
+    stats: {
+      cleanup: cleanupCounts,
+      file: fileCounts,
+      preview: previewCounts,
+    },
   });
 });
 

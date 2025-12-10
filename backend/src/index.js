@@ -19,7 +19,7 @@ import authorizationRoutes from './routes/authorization.js';
 import { errorHandler } from './middleware/errorHandler.js';
 
 // Import queue system
-// import { initializeQueues } from './queues/index.js';
+import { initializeQueues } from './queues/index.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -70,13 +70,14 @@ app.listen(PORT, async () => {
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
 
-  // Queue system temporarily disabled due to Redis connection errors
-  // try {
-  //   await initializeQueues();
-  // } catch (error) {
-  //   console.error('Failed to initialize queues:', error);
-  //   // Don't exit, server can still run without queues
-  // }
+  // Initialize preview queue system
+  try {
+    await initializeQueues();
+  } catch (error) {
+    console.error('Failed to initialize queues:', error);
+    console.warn('⚠️  Preview generation queue may not be available');
+    // Don't exit, server can still run without queues
+  }
 });
 
 // Handle unhandled promise rejections

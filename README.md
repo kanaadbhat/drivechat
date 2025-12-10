@@ -25,14 +25,28 @@
 - **Single-User, Multi-Device Chat**: Send messages from any device (phone, laptop, tablet) and see them instantly on all others
 - **Real-time Sync**: Powered by Firestore listeners—no manual refresh needed
 - **File Sharing**: Upload files to your own Google Drive; metadata stored securely in Firestore
+- **Smart Preview System**: Automatic thumbnail generation for images, poster frames for videos, waveforms for audio, and first-page previews for PDFs
 - **Device Management**: Name your devices (e.g., "MyIphone", "MyLaptop") for clarity
 - **Message Status**: See which device sent/received each message with timestamp
 - **Ephemeral Messages**: Messages auto-delete after 24 hours (configurable by Pro users)
 - **Star Messages**: Important messages can be starred to persist indefinitely
-- **File Preview**: Inline preview for images and videos; quick access links for documents
+- **Rich Media Preview**: Inline preview for images, videos (with seeking), audio (with waveform), and documents
 - **Categorized File Manager**: View files grouped by type (docs, images, videos, others)
 - **Full-Text Search**: Search across all messages and file names
 - **User Analytics**: Track message count, storage usage, last active time, and more
+
+### Preview Generation System 🎨
+
+- **Automatic Background Processing**: Previews generate asynchronously via BullMQ queue system
+- **Multiple Thumbnail Sizes**: Responsive images (320px, 640px, 1280px) for optimal loading
+- **Video Posters**: Extracts poster frame at 1 second + duration calculation
+- **Audio Waveforms**: Visual waveform generation (640x120px) + duration display
+- **PDF First Page**: Converts first page to PNG for quick preview
+- **Office Document Support**: Exports DOCX/XLSX/PPTX to PDF, then extracts first page
+- **Drive-Stored**: All previews stored in user's Drive "DriveChat-previews" folder
+- **Range Header Support**: Smooth video/audio seeking with HTTP 206 Partial Content
+- **Smart Loading States**: Skeleton loaders while generating, error states on failure
+- **Retry Logic**: 3 automatic retry attempts with exponential backoff
 
 ### Security & Privacy
 
@@ -64,6 +78,10 @@
 - **Firebase Admin SDK** — Firestore operations with elevated privileges
 - **Google Drive API** — File upload/download/delete
 - **Clerk SDK** — Token verification and session management
+- **BullMQ + Redis** — Background job processing for preview generation
+- **Sharp** — High-performance image thumbnail generation
+- **FFmpeg** — Video poster extraction and audio waveform generation
+- **PDF-Poppler** — PDF to image conversion
 - **Cron Jobs** — Scheduled cleanup of expired messages
 - **Morgan** — HTTP request logging
 - **CORS** — Cross-origin resource sharing
@@ -105,16 +123,24 @@
    cd drivechat
    ```
 
-2. **Start Redis** (choose one)
+2. **Start Redis** (required for preview generation)
 
-   ```bash
-   # Option A: Docker (recommended)
-   docker run -d --name redis-dev -p 6379:6379 redis:7-alpine
-   redis-cli ping  # Should output: PONG
+   ```powershell
+   # Quick start script (Windows):
+   .\start-redis.ps1
 
-   # Option B: Local Redis on Windows
-   # Download from: https://github.com/microsoftarchive/redis/releases
+   # OR manually:
+   # Docker (recommended):
+   docker run -d --name drivechat-redis -p 6379:6379 --restart unless-stopped redis:latest
+
+   # WSL2:
+   wsl sudo service redis-server start
+
+   # Verify:
+   redis-cli ping  # Should return: PONG
    ```
+
+   **📖 [Full Redis setup guide](./Docs/REDIS_SETUP.md)**
 
 3. **Install dependencies**
 
@@ -598,12 +624,25 @@ vercel deploy
 
 ## 📚 Resources
 
+### Official Documentation
+
 - [Firestore Documentation](https://firebase.google.com/docs/firestore)
 - [Google Drive API](https://developers.google.com/drive/api)
 - [Clerk Documentation](https://clerk.com/docs)
 - [React Documentation](https://react.dev)
 - [Vite Documentation](https://vitejs.dev)
 - [Tailwind CSS](https://tailwindcss.com)
+- [BullMQ Documentation](https://docs.bullmq.io/)
+- [Redis Documentation](https://redis.io/docs/)
+
+### DriveChat Documentation
+
+- **[Quick Start Guide](./Docs/QUICK_START_PREVIEW.md)** - Get up and running in 5 minutes
+- **[Redis Setup Guide](./Docs/REDIS_SETUP.md)** - Detailed Redis installation for all platforms
+- **[Preview System Architecture](./Docs/PREVIEW_SYSTEM.md)** - Complete technical documentation
+- **[Preview API Reference](./Docs/PREVIEW_API_REFERENCE.md)** - Frontend integration examples
+- **[Development Guide](./Docs/DEVELOPMENT_GUIDE.md)** - Full development setup
+- **[Project Architecture](./Docs/PROJECT_ARCHITECTURE.md)** - System architecture overview
 
 ---
 

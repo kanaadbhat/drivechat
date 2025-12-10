@@ -2,7 +2,7 @@ import { google } from 'googleapis';
 import { getFileCategory } from '../utils/fileUtils.js';
 import { getOAuthClientForUser, clearStoredTokens } from '../utils/googleAuth.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
-// import { queueFileUpload, queueFileDelete } from '../queues/fileQueue.js';
+import { queuePreviewGeneration } from '../queues/previewQueue.js';
 import multer from 'multer';
 import { Readable } from 'stream';
 
@@ -148,6 +148,8 @@ export const uploadFile = asyncHandler(async (req, res) => {
     const fileCategory = getFileCategory(file.mimetype);
 
     console.log(`[DEBUG]   ✅ [uploadFile] SUCCESS`);
+    console.log(`[DEBUG]   ℹ️  Preview generation will be queued when message is created`);
+
     res.json({
       success: true,
       fileId: driveFile.data.id,
@@ -415,7 +417,7 @@ export const getFilePreview = asyncHandler(async (req, res) => {
 });
 
 /**
- * Proxy file content from Google Drive (for direct preview)
+ * Proxy file content from Google Drive (for direct preview with Range support)
  */
 export const proxyFileContent = asyncHandler(async (req, res) => {
   try {
@@ -431,20 +433,65 @@ export const proxyFileContent = asyncHandler(async (req, res) => {
       fields: 'name, mimeType, size',
     });
 
-    // Stream the file content
-    const response = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+    const fileSize = parseInt(fileMeta.data.size || 0);
+    const fileName = fileMeta.data.name;
+    const mimeType = fileMeta.data.mimeType;
 
-    // Set appropriate headers
-    res.setHeader('Content-Type', fileMeta.data.mimeType);
-    res.setHeader('Content-Disposition', `inline; filename="${fileMeta.data.name}"`);
-    res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+    // Parse Range header for video/audio seeking support
+    const rangeHeader = req.headers.range;
 
-    if (fileMeta.data.size) {
-      res.setHeader('Content-Length', fileMeta.data.size);
+    if (rangeHeader && fileSize > 0) {
+      // Parse range: "bytes=start-end"
+      const rangeParts = rangeHeader.replace(/bytes=/, '').split('-');
+      const start = parseInt(rangeParts[0], 10);
+      const end = rangeParts[1] ? parseInt(rangeParts[1], 10) : fileSize - 1;
+      const chunkSize = end - start + 1;
+
+      // Validate range
+      if (start >= fileSize || end >= fileSize || start > end) {
+        res.status(416).setHeader('Content-Range', `bytes */${fileSize}`);
+        return res.send('Range Not Satisfiable');
+      }
+
+      // Request partial content from Drive
+      const response = await drive.files.get(
+        { fileId, alt: 'media' },
+        {
+          responseType: 'stream',
+          headers: {
+            Range: `bytes=${start}-${end}`,
+          },
+        }
+      );
+
+      // Set partial content headers
+      res.status(206); // Partial Content
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Length', chunkSize);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+      res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+
+      // Pipe the partial stream to response
+      response.data.pipe(res);
+    } else {
+      // No range requested, stream entire file
+      const response = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+
+      // Set appropriate headers
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+      res.setHeader('Accept-Ranges', 'bytes'); // Advertise Range support
+      res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+
+      if (fileSize > 0) {
+        res.setHeader('Content-Length', fileSize);
+      }
+
+      // Pipe the file stream to response
+      response.data.pipe(res);
     }
-
-    // Pipe the file stream to response
-    response.data.pipe(res);
   } catch (error) {
     console.error('File proxy error:', error);
     res.status(500).json({

@@ -31,6 +31,7 @@ import {
   getDeviceIcon,
   DEVICE_TYPES,
 } from '../utils/deviceManager';
+import FilePreview from './FilePreview';
 
 dayjs.extend(relativeTime);
 
@@ -204,7 +205,7 @@ export default function ChatInterface() {
       if (!searchQuery && !showStarredOnly && document.visibilityState === 'visible') {
         fetchMessages();
       }
-    }, 5000);
+    }, 2000); // Poll every 2 seconds for faster preview updates
     return () => clearInterval(interval);
   }, [searchQuery, showStarredOnly, fetchMessages]);
 
@@ -533,15 +534,11 @@ export default function ChatInterface() {
     closeContextMenu();
   };
 
-  // Get authenticated URL with token for media
+  // Get authenticated URL with FRESH token for media (tokens expire in 60s)
   const getAuthenticatedUrl = useCallback(
     async (fileId) => {
-      // Check if we already have the URL cached
-      if (authenticatedUrls[fileId]) {
-        return authenticatedUrls[fileId];
-      }
-
       try {
+        // Always fetch a fresh token instead of caching URLs with expired tokens
         const token = await getToken();
         if (!token) {
           console.error('No token available for authenticated URL');
@@ -550,7 +547,7 @@ export default function ChatInterface() {
 
         const url = `${API_URL}/api/files/${fileId}/content?token=${encodeURIComponent(token)}`;
 
-        // Cache the URL
+        // Update cache with fresh URL
         setAuthenticatedUrls((prev) => ({ ...prev, [fileId]: url }));
 
         return url;
@@ -559,41 +556,48 @@ export default function ChatInterface() {
         return null;
       }
     },
-    [authenticatedUrls, getToken]
+    [getToken] // Removed authenticatedUrls dependency to always generate fresh URLs
   );
 
-  // Generate authenticated URLs for all file messages when messages change
+  // Generate authenticated URLs for all file messages and their previews when messages change
   useEffect(() => {
     const generateUrls = async () => {
       const fileMessages = messages.filter((m) => m.type === 'file' && m.fileId);
       if (fileMessages.length === 0) return;
 
       console.log('Generating authenticated URLs for', fileMessages.length, 'file messages');
-      console.log(
-        'File messages:',
-        fileMessages.map((m) => ({ id: m.fileId, type: m.mimeType, name: m.fileName }))
-      );
+
+      // Collect all file IDs that need URLs (original files + preview files)
+      const fileIdsToFetch = new Set();
 
       for (const msg of fileMessages) {
-        if (!authenticatedUrls[msg.fileId]) {
-          const url = await getAuthenticatedUrl(msg.fileId);
-          if (url) {
-            console.log('Generated URL for file:', msg.fileId, '→', url);
-          } else {
-            console.error('Failed to generate URL for file:', msg.fileId);
-          }
-        } else {
-          console.log('URL already cached for:', msg.fileId);
-        }
+        // Add main file ID
+        fileIdsToFetch.add(msg.fileId);
+
+        // Add preview file IDs if they exist
+        if (msg.thumbnailDriveFileId) fileIdsToFetch.add(msg.thumbnailDriveFileId);
+        if (msg.thumbnailSizes?.small?.id) fileIdsToFetch.add(msg.thumbnailSizes.small.id);
+        if (msg.thumbnailSizes?.medium?.id) fileIdsToFetch.add(msg.thumbnailSizes.medium.id);
+        if (msg.thumbnailSizes?.large?.id) fileIdsToFetch.add(msg.thumbnailSizes.large.id);
+        if (msg.posterDriveFileId) fileIdsToFetch.add(msg.posterDriveFileId);
+        if (msg.waveformDriveFileId) fileIdsToFetch.add(msg.waveformDriveFileId);
+        if (msg.pdfFirstPageDriveFileId) fileIdsToFetch.add(msg.pdfFirstPageDriveFileId);
       }
 
-      console.log('Current authenticatedUrls state:', authenticatedUrls);
+      // Generate URLs for all file IDs
+      for (const fileId of fileIdsToFetch) {
+        const url = await getAuthenticatedUrl(fileId);
+        if (!url) {
+          console.error('Failed to generate URL for file:', fileId);
+        }
+      }
     };
 
     if (messages.length > 0) {
       generateUrls();
     }
-  }, [messages, authenticatedUrls, getToken, getAuthenticatedUrl]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]); // Only re-run when messages change, not on every token/function change
 
   const handleEditMessage = async () => {
     if (!editText.trim() || !editingMessage) return;
@@ -930,93 +934,8 @@ export default function ChatInterface() {
                             )
                           }
                         >
-                          {/* Image preview */}
-                          {message.mimeType?.startsWith('image/') && message.fileId && (
-                            <>
-                              {authenticatedUrls[message.fileId] ? (
-                                <img
-                                  src={authenticatedUrls[message.fileId]}
-                                  alt={message.fileName}
-                                  className="max-w-xs max-h-64 rounded cursor-pointer object-cover"
-                                  onClick={() =>
-                                    window.open(
-                                      `https://drive.google.com/file/d/${message.fileId}/view`,
-                                      '_blank'
-                                    )
-                                  }
-                                  onError={(e) => {
-                                    console.error('Image load error for', message.fileId);
-                                    e.target.style.display = 'none';
-                                  }}
-                                />
-                              ) : (
-                                <div className="flex items-center justify-center w-32 h-32 bg-gray-700 rounded">
-                                  <span className="text-gray-400 text-xs">Loading...</span>
-                                </div>
-                              )}
-                            </>
-                          )}
-                          {/* Video preview with controls */}
-                          {message.mimeType?.startsWith('video/') && message.fileId && (
-                            <>
-                              {authenticatedUrls[message.fileId] ? (
-                                <video
-                                  controls
-                                  controlsList="nodownload"
-                                  className="max-w-xs max-h-64 rounded"
-                                  onError={(e) => {
-                                    console.error('Video load error for', message.fileId);
-                                    e.target.style.display = 'none';
-                                  }}
-                                >
-                                  <source
-                                    src={authenticatedUrls[message.fileId]}
-                                    type={message.mimeType}
-                                  />
-                                  Your browser does not support the video tag.
-                                </video>
-                              ) : (
-                                <div className="flex items-center justify-center w-64 h-48 bg-gray-700 rounded">
-                                  <span className="text-gray-400 text-xs">Loading video...</span>
-                                </div>
-                              )}
-                            </>
-                          )}
-                          {/* Audio preview with controls */}
-                          {message.mimeType?.startsWith('audio/') && message.fileId && (
-                            <>
-                              {authenticatedUrls[message.fileId] ? (
-                                <audio controls className="w-full max-w-xs">
-                                  <source
-                                    src={authenticatedUrls[message.fileId]}
-                                    type={message.mimeType}
-                                  />
-                                  Your browser does not support the audio tag.
-                                </audio>
-                              ) : (
-                                <div className="flex items-center justify-center w-64 h-12 bg-gray-700 rounded">
-                                  <span className="text-gray-400 text-xs">Loading audio...</span>
-                                </div>
-                              )}
-                            </>
-                          )}
-                          {/* PDF preview - show link instead of iframe due to CORS */}
-                          {message.mimeType === 'application/pdf' && message.fileId && (
-                            <div className="px-4 py-3 bg-gray-700/50 rounded">
-                              <p className="text-sm text-gray-300 mb-2">PDF Document</p>
-                              <button
-                                onClick={() =>
-                                  window.open(
-                                    `https://drive.google.com/file/d/${message.fileId}/view`,
-                                    '_blank'
-                                  )
-                                }
-                                className="text-sm text-blue-400 hover:text-blue-300 underline"
-                              >
-                                Open in Google Drive
-                              </button>
-                            </div>
-                          )}
+                          <FilePreview message={message} authenticatedUrls={authenticatedUrls} />
+
                           {/* File info */}
                           <div className="flex items-center gap-2 text-sm">
                             {getFileIcon(message.fileName)}

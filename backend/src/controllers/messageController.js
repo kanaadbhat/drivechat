@@ -116,6 +116,45 @@ export const createMessage = asyncHandler(async (req, res) => {
   // Create message in Firestore
   const message = await firestoreHelpers.createMessage(userId, messageData);
 
+  // If this is a file message, queue preview generation NOW (with messageId)
+  if (type === 'file' && fileId) {
+    const { queuePreviewGeneration } = await import('../queues/previewQueue.js');
+
+    try {
+      console.log(
+        `[messageController] 📋 Queueing preview generation for ${fileId} with messageId ${message.id}`
+      );
+
+      // Get the parent folder ID from the file metadata
+      const oauth2Client = await import('../utils/googleAuth.js').then((m) =>
+        m.getOAuthClientForUser(userId)
+      );
+      const { google } = await import('googleapis');
+      const drive = google.drive({ version: 'v3', auth: oauth2Client });
+
+      const fileMetadata = await drive.files.get({
+        fileId,
+        fields: 'parents',
+      });
+
+      const parentFolderId = fileMetadata.data.parents?.[0];
+
+      await queuePreviewGeneration({
+        userId,
+        messageId: message.id, // ✅ messageId is now available!
+        fileId,
+        parentFolderId,
+        mimeType: mimeType || 'application/octet-stream',
+        fileName,
+      });
+
+      console.log(`[messageController] ✅ Preview generation queued successfully`);
+    } catch (error) {
+      console.error(`[messageController] ⚠️ Failed to queue preview generation:`, error.message);
+      // Don't fail the message creation if preview queueing fails
+    }
+  }
+
   // Schedule auto-deletion if message has expiry (disabled for now)
   // if (messageData.expiresAt && !messageData.starred) {
   //   try {
@@ -215,14 +254,22 @@ export const deleteMessage = asyncHandler(async (req, res) => {
   // If it's a file message, delete from Google Drive first
   if (message.type === 'file' && message.fileId) {
     try {
-      console.log(`[deleteMessage] Deleting file ${message.fileId} from Google Drive...`);
       const oauth2Client = await getOAuthClientForUser(userId);
       const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
-      await drive.files.delete({ fileId: message.fileId });
-      console.log(`[deleteMessage] ✅ File ${message.fileId} deleted from Drive`);
+      // If message has fileFolderId, delete the entire folder (contains original + all previews)
+      if (message.fileFolderId) {
+        console.log(`[deleteMessage] Deleting folder ${message.fileFolderId} from Google Drive...`);
+        await drive.files.delete({ fileId: message.fileFolderId });
+        console.log(`[deleteMessage] ✅ Folder ${message.fileFolderId} deleted from Drive`);
+      } else {
+        // Fallback: delete just the original file if no folder ID
+        console.log(`[deleteMessage] Deleting file ${message.fileId} from Google Drive...`);
+        await drive.files.delete({ fileId: message.fileId });
+        console.log(`[deleteMessage] ✅ File ${message.fileId} deleted from Drive`);
+      }
     } catch (driveError) {
-      console.error(`[deleteMessage] ⚠️ Failed to delete file from Drive:`, driveError.message);
+      console.error(`[deleteMessage] ⚠️ Failed to delete from Drive:`, driveError.message);
       // Continue with message deletion even if Drive deletion fails
       // The file might already be deleted or user lost access
     }
@@ -317,19 +364,31 @@ export const deleteAllMessages = asyncHandler(async (req, res) => {
       const oauth2Client = await getOAuthClientForUser(userId);
       const drive = google.drive({ version: 'v3', auth: oauth2Client });
 
-      console.log(`[deleteAllMessages] Deleting ${fileMessages.length} files from Google Drive...`);
+      console.log(
+        `[deleteAllMessages] Deleting ${fileMessages.length} file folders from Google Drive...`
+      );
 
-      // Delete files in parallel with error handling for each
+      // Delete file folders (containing original + all previews) in parallel
       await Promise.allSettled(
         fileMessages.map(async (msg) => {
           try {
-            await drive.files.delete({ fileId: msg.fileId });
-            filesDeleted++;
-            console.log(`[deleteAllMessages] ✅ Deleted file: ${msg.fileId}`);
+            // If message has fileFolderId, delete the entire folder (contains original + previews)
+            if (msg.fileFolderId) {
+              await drive.files.delete({ fileId: msg.fileFolderId });
+              filesDeleted++;
+              console.log(
+                `[deleteAllMessages] ✅ Deleted folder: ${msg.fileFolderId} (${msg.fileName})`
+              );
+            } else {
+              // Fallback: delete just the original file if no folder ID
+              await drive.files.delete({ fileId: msg.fileId });
+              filesDeleted++;
+              console.log(`[deleteAllMessages] ✅ Deleted file: ${msg.fileId}`);
+            }
           } catch (error) {
             filesFailed++;
             console.error(
-              `[deleteAllMessages] ⚠️ Failed to delete file ${msg.fileId}:`,
+              `[deleteAllMessages] ⚠️ Failed to delete ${msg.fileFolderId || msg.fileId}:`,
               error.message
             );
           }

@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
+import http from 'http';
 
 // Load environment variables
 dotenv.config();
@@ -20,9 +21,11 @@ import { errorHandler } from './middleware/errorHandler.js';
 
 // Import queue system
 import { initializeQueues } from './queues/index.js';
+import { initRealtime } from './realtime/realtimeHub.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const server = http.createServer(app);
 
 // Middleware
 app.use(
@@ -65,10 +68,27 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 // Start server
-app.listen(PORT, async () => {
+server.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+
+  // Debug: surface realtime / redis config at startup
+  console.log('CONFIG ENABLE_REALTIME=', String(process.env.ENABLE_REALTIME || 'false'));
+  console.log(
+    'CONFIG SKIP_PERIODIC_CLEANUP=',
+    String(process.env.SKIP_PERIODIC_CLEANUP || 'false')
+  );
+  console.log('CONFIG REDIS_HOST=', process.env.REDIS_HOST || 'localhost');
+  console.log('CONFIG REALTIME_STREAM_MAXLEN=', process.env.REALTIME_STREAM_MAXLEN || '10000');
+
+  // Initialize realtime (Socket.IO + Redis Streams)
+  try {
+    initRealtime(server);
+  } catch (error) {
+    console.error('Failed to initialize realtime:', error);
+    console.warn('⚠️  Realtime may not be available');
+  }
 
   // Initialize preview queue system
   try {

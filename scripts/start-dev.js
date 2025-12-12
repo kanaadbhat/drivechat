@@ -4,7 +4,7 @@ import { execSync } from 'child_process';
 function run(cmd) {
   try {
     return execSync(cmd, { stdio: 'pipe', encoding: 'utf8' }).trim();
-  } catch (err) {
+  } catch {
     return '';
   }
 }
@@ -13,7 +13,7 @@ function runInherit(cmd) {
   try {
     execSync(cmd, { stdio: 'inherit', shell: true });
     return true;
-  } catch (err) {
+  } catch {
     console.error('Command failed:', cmd);
     return false;
   }

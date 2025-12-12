@@ -32,10 +32,20 @@ import {
   DEVICE_TYPES,
 } from '../utils/deviceManager';
 import FilePreview from './FilePreview';
+import {
+  clearMessages,
+  deleteMessage as dexieDeleteMessage,
+  loadMessages,
+  upsertMessage,
+} from '../db/dexie';
+import { createRealtimeClient } from '../utils/realtimeClient';
 
 dayjs.extend(relativeTime);
 
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+const API_URL =
+  import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+const ENABLE_REALTIME =
+  String(import.meta.env.VITE_ENABLE_REALTIME || 'false').toLowerCase() === 'true';
 
 export default function ChatInterface() {
   const { signOut, getToken } = useAuth();
@@ -43,6 +53,7 @@ export default function ChatInterface() {
   const { session } = useSession();
   const navigate = useNavigate();
   const [messages, setMessages] = useState([]);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [inputMessage, setInputMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [showSidebar, setShowSidebar] = useState(false);
@@ -58,6 +69,15 @@ export default function ChatInterface() {
   const [currentDevice, setCurrentDevice] = useState(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const realtimeRef = useRef(null);
+
+  useEffect(() => {
+    console.info('[ChatInterface] realtime config', {
+      ENABLE_REALTIME,
+      userId: user?.id || 'not-signed-in',
+      deviceId: currentDevice?.deviceId || 'no-device',
+    });
+  }, [ENABLE_REALTIME, user?.id, currentDevice?.deviceId]);
 
   // Helper functions - defined before useEffect hooks that use them
   const scrollToBottom = () => {
@@ -199,15 +219,133 @@ export default function ChatInterface() {
     fetch();
   }, [searchQuery, showStarredOnly, fetchMessages]);
 
+  // Load cached messages early (realtime mode)
   useEffect(() => {
+    const run = async () => {
+      if (!ENABLE_REALTIME) return;
+      if (!user?.id) return;
+      try {
+        const cached = await loadMessages(user.id, 1000);
+        if (cached?.length) {
+          const sorted = cached.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+          setMessages(sorted);
+        }
+      } catch (e) {
+        console.warn('Failed to load cached messages:', e?.message);
+      }
+    };
+    run();
+  }, [user?.id]);
+
+  useEffect(() => {
+    console.info('[ChatInterface] realtimeConnected changed', realtimeConnected);
     const interval = setInterval(() => {
       // Only auto-refresh if: not searching, not filtering starred, and document is visible
-      if (!searchQuery && !showStarredOnly && document.visibilityState === 'visible') {
+      const usingPolling = !ENABLE_REALTIME || !realtimeConnected;
+      if (
+        usingPolling &&
+        !searchQuery &&
+        !showStarredOnly &&
+        document.visibilityState === 'visible'
+      ) {
+        console.info('[ChatInterface] polling triggered', {
+          usingPolling,
+          realtimeConnected,
+          searchQuery: searchQuery || 'empty',
+          showStarredOnly,
+        });
         fetchMessages();
       }
     }, 2000); // Poll every 2 seconds for faster preview updates
     return () => clearInterval(interval);
-  }, [searchQuery, showStarredOnly, fetchMessages]);
+  }, [searchQuery, showStarredOnly, realtimeConnected, fetchMessages]);
+
+  // Connect realtime (Socket.IO + Redis Streams)
+  useEffect(() => {
+    const run = async () => {
+      if (!ENABLE_REALTIME) return;
+      if (!user?.id) return;
+      if (!currentDevice?.deviceId) return;
+      if (realtimeRef.current) return;
+
+      console.info('[ChatInterface] realtime effect start', {
+        userId: user.id,
+        deviceId: currentDevice.deviceId,
+        realtimeRefExists: Boolean(realtimeRef.current),
+      });
+
+      try {
+        realtimeRef.current = await createRealtimeClient({
+          apiUrl: API_URL,
+          getToken,
+          userId: user.id,
+          deviceId: currentDevice.deviceId,
+          onStatus: ({ connected }) => setRealtimeConnected(Boolean(connected)),
+          onEvent: async (event) => {
+            if (!event?.type) return;
+
+            if (event.type === 'messages.cleared') {
+              await clearMessages(user.id);
+              setMessages([]);
+              return;
+            }
+
+            if (event.type === 'message.deleted') {
+              const mid = event.messageId;
+              await dexieDeleteMessage(user.id, mid);
+              setMessages((prev) => prev.filter((m) => m.id !== mid));
+              return;
+            }
+
+            if (event.type === 'message.created' || event.type === 'message.updated') {
+              const msg = event.message;
+              if (!msg?.id) return;
+              await upsertMessage(user.id, msg);
+              setMessages((prev) => {
+                const exists = prev.some((m) => m.id === msg.id);
+                const next = exists ? prev.map((m) => (m.id === msg.id ? msg : m)) : [...prev, msg];
+                return next.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+              });
+              return;
+            }
+
+            if (event.type === 'preview.ready') {
+              const patch = event.patch;
+              const mid = event.messageId;
+              if (!mid || !patch) return;
+              setMessages((prev) => {
+                const next = prev.map((m) => (m.id === mid ? { ...m, ...patch } : m));
+                const updated = next.find((m) => m.id === mid);
+                if (updated) upsertMessage(user.id, updated);
+                return next;
+              });
+              return;
+            }
+          },
+        });
+        console.info('[ChatInterface] realtime client initialized', {
+          userId: user.id,
+          deviceId: currentDevice.deviceId,
+          socketId: realtimeRef.current?.socket?.id,
+        });
+      } catch (e) {
+        console.warn('Realtime connection failed:', e?.message);
+        setRealtimeConnected(false);
+      }
+    };
+
+    run();
+
+    return () => {
+      try {
+        realtimeRef.current?.disconnect?.();
+      } catch {
+        // ignore
+      }
+      realtimeRef.current = null;
+      setRealtimeConnected(false);
+    };
+  }, [user?.id, currentDevice?.deviceId, getToken]);
 
   // Handle OAuth query parameters (success/error from authorization callback)
   useEffect(() => {

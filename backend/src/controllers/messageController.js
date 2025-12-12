@@ -3,6 +3,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { getOAuthClientForUser } from '../utils/googleAuth.js';
 import { google } from 'googleapis';
 import { scheduleMessageDeletion, cancelMessageDeletion } from '../queues/cleanupQueue.js';
+import { publishUserEvent } from '../realtime/realtimeHub.js';
 
 /**
  * Get all messages for the authenticated user
@@ -114,6 +115,18 @@ export const createMessage = asyncHandler(async (req, res) => {
 
   // Create message in Firestore
   const message = await firestoreHelpers.createMessage(userId, messageData);
+
+  // Publish realtime event for multi-device delivery
+  try {
+    await publishUserEvent(userId, {
+      type: 'message.created',
+      messageId: message.id,
+      firestorePath: `users/${userId}/messages/${message.id}`,
+      message,
+    });
+  } catch {
+    // non-fatal
+  }
 
   // If this is a file message, queue preview generation NOW (with messageId)
   if (type === 'file' && fileId) {
@@ -247,6 +260,18 @@ export const updateMessage = asyncHandler(async (req, res) => {
 
   const updatedMessage = await firestoreHelpers.getMessage(userId, id);
 
+  // Publish realtime event
+  try {
+    await publishUserEvent(userId, {
+      type: 'message.updated',
+      messageId: id,
+      firestorePath: `users/${userId}/messages/${id}`,
+      message: updatedMessage,
+    });
+  } catch {
+    // non-fatal
+  }
+
   res.json({
     message: updatedMessage,
     success: true,
@@ -295,6 +320,17 @@ export const deleteMessage = asyncHandler(async (req, res) => {
 
   // Delete from Firestore
   await firestoreHelpers.deleteMessage(userId, id);
+
+  // Publish realtime event
+  try {
+    await publishUserEvent(userId, {
+      type: 'message.deleted',
+      messageId: id,
+      firestorePath: `users/${userId}/messages/${id}`,
+    });
+  } catch {
+    // non-fatal
+  }
 
   res.json({
     success: true,
@@ -431,6 +467,16 @@ export const deleteAllMessages = asyncHandler(async (req, res) => {
   });
 
   console.log(`[deleteAllMessages] ✅ Bulk delete complete`);
+
+  // Publish realtime event so other devices clear immediately
+  try {
+    await publishUserEvent(userId, {
+      type: 'messages.cleared',
+      ts: String(Date.now()),
+    });
+  } catch {
+    // non-fatal
+  }
 
   res.json({
     success: true,

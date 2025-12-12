@@ -148,7 +148,11 @@ export const firestoreHelpers = {
       return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     } catch (error) {
       // If composite index doesn't exist, fetch without orderBy and sort in memory
-      console.log('Composite index not available, falling back to client-side sort');
+      console.warn('Composite index not available, falling back to client-side sort', {
+        message: error?.message,
+        code: error?.code,
+        details: error,
+      });
       const snapshot = await messagesRef.where('starred', '==', true).get();
 
       const messages = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));

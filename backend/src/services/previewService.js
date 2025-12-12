@@ -11,6 +11,7 @@ import os from 'os';
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import logger from '../utils/logger.js';
+import { publishUserEvent } from '../realtime/realtimeHub.js';
 
 const execPromise = promisify(exec);
 
@@ -149,6 +150,18 @@ export async function generatePreviewsForFile({
         await firestoreHelpers.updateMessage(userId, messageId, updateData);
 
         logger.info(`[PreviewService] ✅ Successfully updated Firestore message ${messageId}`);
+
+        // Publish realtime patch so clients update previews without polling
+        try {
+          await publishUserEvent(userId, {
+            type: 'preview.ready',
+            messageId,
+            firestorePath: `users/${userId}/messages/${messageId}`,
+            patch: updateData,
+          });
+        } catch {
+          // non-fatal
+        }
       } catch (error) {
         logger.error(`[PreviewService] ❌ Could not update message ${messageId}:`, error.message);
         logger.error(`[PreviewService] Full error:`, error);

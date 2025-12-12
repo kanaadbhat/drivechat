@@ -32,7 +32,11 @@ export async function initializeQueues() {
     logger.info('✅ File queue worker initialized');
 
     // Setup periodic cleanup tasks
-    await setupPeriodicCleanup();
+    if (String(process.env.SKIP_PERIODIC_CLEANUP || '').toLowerCase() === 'true') {
+      logger.warn('⚠️  SKIP_PERIODIC_CLEANUP=true; skipping periodic cleanup scheduling');
+    } else {
+      await setupPeriodicCleanup();
+    }
 
     logger.info('Active queues: preview-generation, cleanup, file-operations');
     logger.success('✅ Queue system initialized successfully');

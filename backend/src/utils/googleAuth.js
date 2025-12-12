@@ -6,30 +6,18 @@ import clerk from '../config/clerk.js';
 const db = admin.firestore();
 
 export async function persistTokensForUser(userId, tokens) {
-  console.log(`\n[DEBUG] [persistTokensForUser] START - userId: ${userId}`);
   const update = {};
 
   const a = tokens.access_token || tokens.accessToken || tokens.token;
   const r = tokens.refresh_token || tokens.refreshToken || tokens.refreshTokenValue;
   const e = tokens.expiry_date || tokens.expiryDate || tokens.expires_at || tokens.expiresAt;
 
-  console.log(`[DEBUG]   💾 Saving tokens:`);
-  console.log(
-    `[DEBUG]     - Access token: ${a ? '✅ Present (' + a.substring(0, 20) + '...)' : '❌ Missing'}`
-  );
-  console.log(`[DEBUG]     - Refresh token: ${r ? '✅ Present' : '❌ Missing'}`);
-  console.log(`[DEBUG]     - Expiry: ${e ? '✅ ' + new Date(e).toISOString() : '❌ Missing'}`);
-
   if (a) update.accessToken = a;
   if (r) update.refreshToken = r;
   if (e) update.expiryDate = e;
   update.needsReconsent = !r; // Mark for re-consent if no refresh token
 
-  console.log(`[DEBUG]     - Needs Reconsent: ${update.needsReconsent ? '⚠️ YES' : '❌ NO'}`);
-
   update.updatedAt = admin.firestore.Timestamp.now();
-
-  console.log(`[DEBUG]   Persisting to Firestore: users/${userId}/oauth/google`);
   await db
     .collection('users')
     .doc(userId)
@@ -37,7 +25,9 @@ export async function persistTokensForUser(userId, tokens) {
     .doc('google')
     .set(update, { merge: true });
 
-  console.log(`[DEBUG]   ✅ Firestore save complete`);
+  console.info(
+    `[googleAuth] persisted tokens for ${userId} (needsReconsent=${update.needsReconsent})`
+  );
   try {
     await db.collection('users').doc(userId).set(
       {
@@ -46,26 +36,27 @@ export async function persistTokensForUser(userId, tokens) {
       },
       { merge: true }
     );
-    console.log('[DEBUG]   ✅ Updated user driveConnected flag');
+    console.debug('[googleAuth] updated user driveConnected flag');
   } catch (err) {
-    console.error('[DEBUG]   ⚠️ Failed to update user driveConnected flag:', err.message);
+    console.warn('[googleAuth] failed to update user driveConnected flag:', err.message);
   }
 }
 
 export async function getStoredTokens(userId) {
-  console.log(`[DEBUG] [getStoredTokens] START - userId: ${userId}`);
   const doc = await db.collection('users').doc(userId).collection('oauth').doc('google').get();
 
   if (doc.exists) {
     const data = doc.data();
-    console.log(`[DEBUG]   ✅ Tokens found in Firestore`);
-    console.log(`[DEBUG]     - Access token: ${data.accessToken ? '✅' : '❌'}`);
-    console.log(`[DEBUG]     - Refresh token: ${data.refreshToken ? '✅' : '❌'}`);
-    console.log(`[DEBUG]     - Needs reconsent: ${data.needsReconsent ? '⚠️ YES' : '❌ NO'}`);
+    console.info('[googleAuth] tokens found', {
+      userId,
+      hasAccessToken: Boolean(data.accessToken),
+      hasRefreshToken: Boolean(data.refreshToken),
+      needsReconsent: Boolean(data.needsReconsent),
+    });
     return data;
   }
 
-  console.log(`[DEBUG]   ❌ No tokens found in Firestore`);
+  console.info('[googleAuth] no tokens found', { userId });
   return null;
 }
 
@@ -76,50 +67,40 @@ export async function clearStoredTokens(userId) {
 }
 
 export async function tryFetchClerkProviderTokens(userId) {
-  console.log(`[DEBUG] [tryFetchClerkProviderTokens] START - userId: ${userId}`);
   if (!clerk || !clerk.users) {
-    console.log(`[DEBUG]   ❌ Clerk SDK not available`);
+    console.debug('[googleAuth] Clerk SDK not available');
     return null;
   }
 
   // Discover actual provider ID from user's external accounts
   let providerId = 'oauth_google'; // Default fallback
   try {
-    console.log(`[DEBUG]   Discovering provider ID from Clerk...`);
     const user = await clerk.users.getUser(userId);
     const ext = user?.externalAccounts || user?.external_accounts || [];
     if (Array.isArray(ext) && ext.length > 0) {
       const googleAccount = ext.find((x) => x.provider && x.provider.includes('google'));
       if (googleAccount) {
         providerId = googleAccount.provider;
-        console.log(`[DEBUG]     ✅ Found Google provider: ${providerId}`);
       }
     }
   } catch (e) {
-    console.log(`[DEBUG]     ⚠️  Provider discovery error: ${e.message}`);
-    // Ignore discovery errors, use fallback
+    console.debug('[googleAuth] provider discovery error, using default providerId', {
+      userId,
+      err: e?.message,
+    });
   }
 
-  // Try canonical Clerk API call
   try {
-    console.log(
-      `[DEBUG]   Calling Clerk.users.getUserOauthAccessToken with provider: ${providerId}`
-    );
+    console.debug('[googleAuth] calling Clerk API for oauth token', { userId, providerId });
 
     // Clerk API call - the method signature is: getUserOauthAccessToken(userId, provider)
     // NOT getUserOauthAccessToken({ userId, provider })
     const resp = await clerk.users.getUserOauthAccessToken(userId, providerId);
 
     if (!resp) {
-      console.log(`[DEBUG]   ❌ Clerk returned no response`);
+      console.debug('[googleAuth] clerk returned no response', { userId, providerId });
       return null;
     }
-
-    console.log(`[DEBUG]   ✅ Clerk response received`);
-    console.log(`[DEBUG]     Response type: ${Array.isArray(resp) ? 'array' : typeof resp}`);
-    console.log(
-      `[DEBUG]     Response keys: ${typeof resp === 'object' ? Object.keys(resp).join(', ') : 'N/A'}`
-    );
 
     // Handle ARRAY response: [ { provider: "oauth_google", token: "..." } ]
     if (Array.isArray(resp) && resp.length > 0) {
@@ -131,7 +112,7 @@ export async function tryFetchClerkProviderTokens(userId) {
           refresh_token: item.refresh_token || item.refreshToken || null,
           expires_at: item.expires_at || item.expiry_date || item.expiryDate || null,
         };
-        console.log(`[DEBUG]     ✅ Extracted tokens from array item`);
+        console.debug('[googleAuth] extracted tokens from clerk array response', { userId });
         return result;
       }
     }
@@ -148,26 +129,27 @@ export async function tryFetchClerkProviderTokens(userId) {
           refresh_token: resp.refresh_token || resp.refreshToken || null,
           expires_at: resp.expires_at || resp.expiry_date || resp.expiryDate || null,
         };
-        console.log(`[DEBUG]     ✅ Extracted tokens from object`);
-        console.log(`[DEBUG]       - Access token: ${result.access_token ? '✅' : '❌'}`);
-        console.log(`[DEBUG]       - Refresh token: ${result.refresh_token ? '✅' : '❌'}`);
+        console.debug('[googleAuth] extracted tokens from clerk object response', {
+          userId,
+          hasRefresh: Boolean(result.refresh_token),
+        });
         return result;
       }
     }
 
-    console.log(`[DEBUG]   ❌ No access token found in response`);
-    console.log(`[DEBUG]   Raw response:`, JSON.stringify(resp, null, 2));
+    console.debug('[googleAuth] no access token in clerk response', {
+      userId,
+      raw: typeof resp === 'object' ? Object.keys(resp) : typeof resp,
+    });
     return null;
   } catch (err) {
-    console.log(`[DEBUG]   ❌ Clerk API error: ${err.message}`);
-    console.log(`[DEBUG]   Error details:`, err);
+    console.warn('[googleAuth] clerk api error', { userId, message: err?.message });
     // Clerk API call failed
     return null;
   }
 }
 
 export async function getOAuthClientForUser(userId) {
-  console.log(`\n[DEBUG] [getOAuthClientForUser] START - userId: ${userId}`);
   let tokenData = await getStoredTokens(userId);
 
   if (!tokenData) {
@@ -181,11 +163,11 @@ export async function getOAuthClientForUser(userId) {
   }
 
   if (!tokenData || !tokenData.accessToken) {
-    console.log(`[DEBUG]   ❌ No access token available`);
+    console.info('[googleAuth] no access token available for user', { userId });
     throw new Error('No Google tokens for user. Please connect Google Drive.');
   }
 
-  console.log(`[DEBUG]   Creating OAuth2 client...`);
+  console.debug('[googleAuth] creating OAuth2 client', { userId });
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
@@ -199,20 +181,21 @@ export async function getOAuthClientForUser(userId) {
     expiry_date: tokenData.expiryDate,
   });
 
-  console.log(`[DEBUG]   ✅ OAuth client configured`);
-  console.log(`[DEBUG]     - Access token: ${tokenData.accessToken ? '✅' : '❌'}`);
-  console.log(`[DEBUG]     - Refresh token: ${tokenData.refreshToken ? '✅' : '❌'}`);
-  console.log(
-    `[DEBUG]     - Expiry: ${tokenData.expiryDate ? new Date(tokenData.expiryDate).toISOString() : '❌'}`
-  );
+  console.info('[googleAuth] oauth client configured', {
+    userId,
+    hasRefreshToken: Boolean(tokenData.refreshToken),
+  });
 
   // Auto-persist refreshed tokens
   oauth2Client.on('tokens', async (tokens) => {
     try {
       await persistTokensForUser(userId, tokens);
-      console.log('✅ Auto-refreshed tokens persisted for user:', userId);
+      console.info('[googleAuth] auto-refreshed tokens persisted', { userId });
     } catch (e) {
-      console.error('Failed to persist refreshed tokens:', e);
+      console.warn('[googleAuth] failed to persist refreshed tokens', {
+        userId,
+        message: e?.message,
+      });
     }
   });
 

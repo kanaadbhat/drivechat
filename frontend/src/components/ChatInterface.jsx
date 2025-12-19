@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth, useUser, useSession } from '@clerk/clerk-react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
@@ -81,6 +81,17 @@ export default function ChatInterface() {
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+  };
+
+  const getDayLabel = (dateKey) => {
+    const date = dayjs(dateKey, 'YYYY-MM-DD');
+    const today = dayjs().startOf('day');
+    const yesterday = today.subtract(1, 'day');
+
+    if (date.isSame(today, 'day')) return 'Today';
+    if (date.isSame(yesterday, 'day')) return 'Yesterday';
+    if (date.isSame(today, 'year')) return date.format('MMMM D');
+    return date.format('MMMM D, YYYY');
   };
   // Initialize GIS on mount
   useEffect(() => {
@@ -706,6 +717,22 @@ export default function ChatInterface() {
     closeContextMenu();
   };
 
+  const timelineItems = useMemo(() => {
+    const items = [];
+    let lastDate = null;
+
+    messages.forEach((message) => {
+      const dateKey = dayjs(message.timestamp).format('YYYY-MM-DD');
+      if (dateKey !== lastDate) {
+        items.push({ type: 'separator', date: dateKey });
+        lastDate = dateKey;
+      }
+      items.push({ type: 'message', message });
+    });
+
+    return items;
+  }, [messages]);
+
   // Helper to get Drive URL for display (files are public via "anyone with link")
   const getFileDisplayUrl = useCallback((fileId) => {
     return getDriveContentUrl(fileId);
@@ -982,29 +1009,37 @@ export default function ChatInterface() {
               </div>
             </div>
           ) : (
-            messages.map((message) => (
-              <MessageItem
-                key={message.id}
-                message={message}
-                currentDevice={currentDevice}
-                editingMessage={editingMessage}
-                editText={editText}
-                setEditText={setEditText}
-                setEditingMessage={setEditingMessage}
-                handleEditMessage={handleEditMessage}
-                handleContextMenu={handleContextMenu}
-                handleDownloadFile={handleDownloadFile}
-                toggleStar={toggleStar}
-                setConfirmDelete={setConfirmDelete}
-                closeContextMenu={closeContextMenu}
-                formatBytes={formatBytes}
-                downloadState={downloadStates[message.id]}
-                deleteError={deleteErrors[message.id]}
-                getFileDisplayUrl={getFileDisplayUrl}
-                getThumbnailUrl={getThumbnailUrl}
-                getFileIcon={getFileIcon}
-              />
-            ))
+            timelineItems.map((item) =>
+              item.type === 'separator' ? (
+                <div key={`separator-${item.date}`} className="flex justify-center">
+                  <span className="px-4 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400 bg-gray-900/70 border border-gray-800 rounded-full shadow-sm">
+                    {getDayLabel(item.date)}
+                  </span>
+                </div>
+              ) : (
+                <MessageItem
+                  key={item.message.id}
+                  message={item.message}
+                  currentDevice={currentDevice}
+                  editingMessage={editingMessage}
+                  editText={editText}
+                  setEditText={setEditText}
+                  setEditingMessage={setEditingMessage}
+                  handleEditMessage={handleEditMessage}
+                  handleContextMenu={handleContextMenu}
+                  handleDownloadFile={handleDownloadFile}
+                  toggleStar={toggleStar}
+                  setConfirmDelete={setConfirmDelete}
+                  closeContextMenu={closeContextMenu}
+                  formatBytes={formatBytes}
+                  downloadState={downloadStates[item.message.id]}
+                  deleteError={deleteErrors[item.message.id]}
+                  getFileDisplayUrl={getFileDisplayUrl}
+                  getThumbnailUrl={getThumbnailUrl}
+                  getFileIcon={getFileIcon}
+                />
+              )
+            )
           )}
           <div ref={messagesEndRef} />
         </div>

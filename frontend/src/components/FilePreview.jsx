@@ -37,7 +37,7 @@ function PreviewError({ fileName, error }) {
 }
 
 // Image preview - uses Drive direct URLs (files are public via "anyone with link")
-export function ImagePreview({ message, getFileUrl, getThumbnailUrl }) {
+export function ImagePreview({ message, getFileUrl, getThumbnailUrl, variant = 'default' }) {
   const { fileId, fileName } = message;
 
   // Use Drive thumbnail URL for preview (faster loading)
@@ -48,11 +48,13 @@ export function ImagePreview({ message, getFileUrl, getThumbnailUrl }) {
     return <PreviewSkeleton className="w-32 h-32" />;
   }
 
+  const sizeClass = variant === 'compact' ? 'max-h-48' : 'max-h-64';
+
   return (
     <img
       src={thumbnailUrl}
       alt={fileName}
-      className="max-w-xs max-h-64 rounded cursor-pointer object-cover"
+      className={`max-w-full ${sizeClass} rounded cursor-pointer object-cover`}
       onClick={() => window.open(`https://drive.google.com/file/d/${fileId}/view`, '_blank')}
       onError={(e) => {
         console.error('Image load error for:', fileId);
@@ -69,7 +71,7 @@ export function ImagePreview({ message, getFileUrl, getThumbnailUrl }) {
 }
 
 // Video preview - embeds Drive player
-export function VideoPreview({ message, getFileUrl }) {
+export function VideoPreview({ message, getFileUrl, variant = 'default' }) {
   const { fileId, fileName, durationMs, mimeType } = message;
   const [previewUrl, setPreviewUrl] = useState('');
   const [error, setError] = useState('');
@@ -96,12 +98,16 @@ export function VideoPreview({ message, getFileUrl }) {
     };
   }, [fileId, mimeType]);
 
+  const sizeClass = variant === 'compact' ? 'w-56 h-40' : 'w-64 h-48';
+
   return (
     <div className="relative max-w-xs">
       {previewUrl ? (
-        <video src={previewUrl} className="w-64 h-48 rounded bg-black" controls />
+        <video src={previewUrl} className={`${sizeClass} rounded bg-black`} controls />
       ) : (
-        <div className="w-64 h-48 rounded bg-gray-800 flex items-center justify-center text-gray-400 text-xs">
+        <div
+          className={`${sizeClass} rounded bg-gray-800 flex items-center justify-center text-gray-400 text-xs`}
+        >
           {error || 'Loading preview...'}
         </div>
       )}
@@ -123,7 +129,7 @@ export function VideoPreview({ message, getFileUrl }) {
 }
 
 // Audio preview - simple audio player
-export function AudioPreview({ message, getFileUrl }) {
+export function AudioPreview({ message, getFileUrl, variant = 'default' }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const { fileId, fileName, durationMs } = message;
 
@@ -137,8 +143,10 @@ export function AudioPreview({ message, getFileUrl }) {
     );
   }
 
+  const pad = variant === 'compact' ? 'p-2' : 'p-3';
+
   return (
-    <div className="flex flex-col gap-2 p-3 bg-gray-700/50 rounded-lg w-full max-w-xs">
+    <div className={`flex flex-col gap-2 ${pad} bg-gray-700/50 rounded-lg w-full max-w-xs`}>
       <div className="flex items-center gap-3">
         <button
           onClick={(e) => {
@@ -176,7 +184,7 @@ export function AudioPreview({ message, getFileUrl }) {
 }
 
 // PDF preview - uses Drive embed
-export function PDFPreview({ message }) {
+export function PDFPreview({ message, variant = 'default' }) {
   const { fileId, fileName, mimeType } = message;
   const [previewUrl, setPreviewUrl] = useState('');
   const [error, setError] = useState('');
@@ -203,12 +211,16 @@ export function PDFPreview({ message }) {
     };
   }, [fileId, mimeType]);
 
+  const sizeClass = variant === 'compact' ? 'w-full h-64' : 'w-64 h-80';
+
   return (
     <div className="px-4 py-3 bg-gray-700/50 rounded">
       {previewUrl ? (
-        <iframe src={previewUrl} className="w-64 h-80 rounded mb-3" title={fileName} />
+        <iframe src={previewUrl} className={`${sizeClass} rounded mb-3`} title={fileName} />
       ) : (
-        <div className="w-64 h-80 rounded mb-3 bg-gray-800 flex items-center justify-center text-gray-400 text-sm">
+        <div
+          className={`${sizeClass} rounded mb-3 bg-gray-800 flex items-center justify-center text-gray-400 text-sm`}
+        >
           {error || 'Loading preview...'}
         </div>
       )}
@@ -255,11 +267,13 @@ export function OfficePreview({ message }) {
 }
 
 // Generic file preview for unsupported types
-export function GenericFilePreview({ message }) {
+export function GenericFilePreview({ message, variant = 'default' }) {
   const { fileId, fileName, fileSize } = message;
 
+  const pad = variant === 'compact' ? 'px-3 py-2' : 'px-4 py-3';
+
   return (
-    <div className="px-4 py-3 bg-gray-700/50 rounded flex items-center gap-3">
+    <div className={`${pad} bg-gray-700/50 rounded flex items-center gap-3`}>
       <Download className="w-8 h-8 text-gray-400" />
       <div className="flex-1">
         <p className="text-sm text-gray-300 font-medium truncate">{fileName}</p>
@@ -301,26 +315,31 @@ function getOfficeFileType(fileName) {
  * - getFileUrl: Function to get Drive content URL for a file ID
  * - getThumbnailUrl: Function to get Drive thumbnail URL for a file ID
  */
-export default function FilePreview({ message, getFileUrl, getThumbnailUrl }) {
+export default function FilePreview({ message, getFileUrl, getThumbnailUrl, variant = 'default' }) {
   const { mimeType, fileName } = message;
 
   // Determine file category and render appropriate preview
   if (mimeType?.startsWith('image/')) {
     return (
-      <ImagePreview message={message} getFileUrl={getFileUrl} getThumbnailUrl={getThumbnailUrl} />
+      <ImagePreview
+        message={message}
+        getFileUrl={getFileUrl}
+        getThumbnailUrl={getThumbnailUrl}
+        variant={variant}
+      />
     );
   }
 
   if (mimeType?.startsWith('video/')) {
-    return <VideoPreview message={message} getFileUrl={getFileUrl} />;
+    return <VideoPreview message={message} getFileUrl={getFileUrl} variant={variant} />;
   }
 
   if (mimeType?.startsWith('audio/')) {
-    return <AudioPreview message={message} getFileUrl={getFileUrl} />;
+    return <AudioPreview message={message} getFileUrl={getFileUrl} variant={variant} />;
   }
 
   if (mimeType === 'application/pdf') {
-    return <PDFPreview message={message} />;
+    return <PDFPreview message={message} variant={variant} />;
   }
 
   // Office documents
@@ -334,5 +353,5 @@ export default function FilePreview({ message, getFileUrl, getThumbnailUrl }) {
   }
 
   // Generic file preview for unsupported types
-  return <GenericFilePreview message={message} />;
+  return <GenericFilePreview message={message} variant={variant} />;
 }

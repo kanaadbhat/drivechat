@@ -21,9 +21,6 @@ export default function PreChat() {
   const [pendingCount, setPendingCount] = useState(null);
 
   const ensureDriveAccess = useCallback(async () => {
-    initGisClient();
-    if (hasValidToken()) return;
-
     setStatus('consenting');
     const loginHint = user?.primaryEmailAddress?.emailAddress;
     const timeout = new Promise((_, reject) =>
@@ -92,7 +89,10 @@ export default function PreChat() {
         return;
       }
 
-      await ensureDriveAccess();
+      initGisClient();
+      if (!hasValidToken()) {
+        await ensureDriveAccess();
+      }
       await syncPendingDeletions();
 
       setStatus('success');

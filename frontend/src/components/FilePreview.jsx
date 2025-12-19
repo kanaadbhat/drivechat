@@ -153,7 +153,7 @@ export function AudioPreview({ message, getFileUrl }) {
               setIsPlaying(!isPlaying);
             }
           }}
-          className="p-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 transition-colors flex-shrink-0"
+          className="p-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 transition-colors shrink-0"
         >
           {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
         </button>
@@ -161,7 +161,7 @@ export function AudioPreview({ message, getFileUrl }) {
         <div className="flex-1 h-12 bg-gray-600 rounded"></div>
 
         {durationMs && (
-          <span className="text-xs text-gray-400 flex-shrink-0">{formatDuration(durationMs)}</span>
+          <span className="text-xs text-gray-400 shrink-0">{formatDuration(durationMs)}</span>
         )}
       </div>
 

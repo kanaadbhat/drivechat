@@ -155,6 +155,44 @@ export function revokeToken() {
 }
 
 /**
+ * Download a Drive file using authenticated media endpoint with progress
+ */
+export async function downloadFileFromDrive(fileId, mimeType, onProgress) {
+  if (!fileId) throw new Error('Missing file id');
+  const accessToken = await getAccessToken();
+  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok || !res.body) {
+    throw new Error(`Download failed: ${res.statusText}`);
+  }
+
+  const total = parseInt(res.headers.get('content-length') || '0', 10);
+  const reader = res.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  const startedAt = performance.now();
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.length;
+    if (onProgress) {
+      const percent = total ? Math.round((loaded / total) * 100) : null;
+      const elapsedSec = Math.max((performance.now() - startedAt) / 1000, 0.001);
+      const speedBps = Math.round(loaded / elapsedSec);
+      onProgress({ percent, loaded, total, speedBps });
+    }
+  }
+
+  return new Blob(chunks, { type: mimeType || 'application/octet-stream' });
+}
+
+/**
  * Get the DriveChat app folder ID (creates if needed)
  */
 async function getOrCreateAppFolder(accessToken) {

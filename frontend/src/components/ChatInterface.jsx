@@ -50,6 +50,7 @@ import {
   getDriveThumbnailUrl,
   revokeToken,
   clearStoredToken,
+  downloadFileFromDrive,
 } from '../utils/gisClient';
 
 dayjs.extend(relativeTime);
@@ -80,12 +81,22 @@ export default function ChatInterface() {
   const [pendingUpload, setPendingUpload] = useState(null);
   const [downloadStates, setDownloadStates] = useState({});
   const [deleteErrors, setDeleteErrors] = useState({});
+  const [confirmDelete, setConfirmDelete] = useState(null);
   const [currentDevice, setCurrentDevice] = useState(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const realtimeRef = useRef(null);
   const [showDrivePrompt, setShowDrivePrompt] = useState(false);
   const [authState, setAuthState] = useState({ status: 'idle', message: '' });
+
+  const formatBytes = (bytes = 0, decimals = 1) => {
+    if (!bytes) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+  };
   // Initialize GIS on mount
   useEffect(() => {
     initGisClient();
@@ -535,9 +546,7 @@ export default function ChatInterface() {
     }
   };
 
-  const deleteMessage = async (messageId) => {
-    if (!confirm('Delete this message?')) return;
-
+  const performDelete = async (messageId) => {
     try {
       const token = await getToken();
       if (!token) return;
@@ -545,10 +554,17 @@ export default function ChatInterface() {
       await axios.delete(`${API_URL}/api/messages/${messageId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      setDeleteErrors((prev) => {
+        const next = { ...prev };
+        delete next[messageId];
+        return next;
+      });
       fetchMessages();
     } catch (error) {
       console.error('Error deleting message:', error);
       setDeleteErrors((prev) => ({ ...prev, [messageId]: error.message || 'Delete failed' }));
+    } finally {
+      setConfirmDelete(null);
     }
   };
 
@@ -663,36 +679,17 @@ export default function ChatInterface() {
     }));
 
     try {
-      const downloadUrl = getDriveContentUrl(message.fileId);
-      const res = await fetch(downloadUrl);
-      if (!res.ok || !res.body) throw new Error('Download failed');
-
-      const total = parseInt(res.headers.get('content-length') || '0', 10);
-      const reader = res.body.getReader();
-      const chunks = [];
-      let loaded = 0;
-      const startedAt = performance.now();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        loaded += value.length;
-        const percent = total ? Math.round((loaded / total) * 100) : null;
-        const elapsedSec = Math.max((performance.now() - startedAt) / 1000, 0.001);
-        const speed = Math.round(loaded / elapsedSec);
+      const blob = await downloadFileFromDrive(message.fileId, message.mimeType, (progress) => {
         setDownloadStates((prev) => ({
           ...prev,
           [message.id]: {
             status: 'downloading',
-            progress: percent,
-            speed,
+            progress: progress.percent,
+            speed: progress.speedBps,
             error: null,
           },
         }));
-      }
-
-      const blob = new Blob(chunks, { type: message.mimeType || 'application/octet-stream' });
+      });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -756,10 +753,73 @@ export default function ChatInterface() {
     }
   };
 
-  const handleCopyMessage = (message) => {
-    const textToCopy = message.type === 'text' ? message.text : message.fileName;
-    navigator.clipboard.writeText(textToCopy || '');
-    closeContextMenu();
+  const handleCopyMessage = async (message) => {
+    const writeTextSafe = async (text) => {
+      const value = text || '';
+      if (navigator.clipboard?.writeText) {
+        try {
+          window?.focus?.();
+          await navigator.clipboard.writeText(value);
+          return true;
+        } catch (clipboardErr) {
+          console.warn('Clipboard writeText blocked, falling back', clipboardErr?.message);
+        }
+      }
+      const textarea = document.createElement('textarea');
+      textarea.value = value;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      textarea.style.pointerEvents = 'none';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      try {
+        document.execCommand('copy');
+      } finally {
+        document.body.removeChild(textarea);
+      }
+      return true;
+    };
+
+    try {
+      const fileLink = message.fileId ? getDriveContentUrl(message.fileId) : '';
+
+      if (
+        message.type === 'file' &&
+        message.fileId &&
+        navigator.clipboard?.write &&
+        typeof ClipboardItem !== 'undefined'
+      ) {
+        try {
+          const blob = await downloadFileFromDrive(message.fileId, message.mimeType);
+          if (blob?.type) {
+            const item = new ClipboardItem({ [blob.type]: blob });
+            await navigator.clipboard.write([item]);
+            closeContextMenu();
+            return;
+          }
+        } catch (binaryErr) {
+          console.warn('Binary clipboard write failed, falling back to link', binaryErr?.message);
+        }
+
+        await writeTextSafe(fileLink || message.fileName || message.text || '');
+        closeContextMenu();
+        return;
+      }
+
+      // Non-file or no clipboard write support: always copy a link/text
+      const textToCopy =
+        message.type === 'file' && message.fileId
+          ? fileLink
+          : message.text || message.fileName || '';
+      await writeTextSafe(textToCopy || '');
+    } catch (err) {
+      console.warn('Copy failed, final fallback to link/text', err?.message);
+      const fileLink = message.fileId ? getDriveContentUrl(message.fileId) : '';
+      await writeTextSafe(fileLink || message.text || message.fileName || '');
+    } finally {
+      closeContextMenu();
+    }
   };
 
   const requestDriveAccess = async () => {
@@ -811,40 +871,67 @@ export default function ChatInterface() {
     }
   }, [contextMenu]);
 
+  if (authState.status === 'authorizing' || authState.status === 'error') {
+    return (
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 max-w-md w-full text-center space-y-4">
+          {authState.status === 'authorizing' ? (
+            <>
+              <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
+              <p className="text-white text-lg font-semibold">Connecting Google Drive...</p>
+              <p className="text-gray-400 text-sm">
+                Keep this window open while we complete Drive consent. The popup will close when
+                finished.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-red-400 text-lg font-semibold">Drive access failed</p>
+              <p className="text-gray-300 text-sm whitespace-pre-wrap">{authState.message}</p>
+              <div className="flex gap-2 justify-center">
+                <button
+                  onClick={requestDriveAccess}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
+                >
+                  Retry
+                </button>
+                <button
+                  onClick={() => setAuthState({ status: 'idle', message: '' })}
+                  className="px-4 py-2 bg-gray-800 border border-gray-700 text-gray-200 rounded-lg"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen bg-gray-950 flex overflow-hidden">
-      {(authState.status === 'authorizing' || authState.status === 'error') && (
+      {confirmDelete && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-md shadow-xl text-center space-y-4">
-            {authState.status === 'authorizing' ? (
-              <>
-                <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                <p className="text-white text-lg font-semibold">Connecting Google Drive...</p>
-                <p className="text-gray-400 text-sm">
-                  Keep this window open while we complete Drive consent. The popup will close when
-                  finished.
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="text-red-400 text-lg font-semibold">Drive access failed</p>
-                <p className="text-gray-300 text-sm whitespace-pre-wrap">{authState.message}</p>
-                <div className="flex gap-2 justify-center">
-                  <button
-                    onClick={requestDriveAccess}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
-                  >
-                    Retry
-                  </button>
-                  <button
-                    onClick={() => setAuthState({ status: 'idle', message: '' })}
-                    className="px-4 py-2 bg-gray-800 border border-gray-700 text-gray-200 rounded-lg"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </>
-            )}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-sm shadow-xl text-center space-y-4">
+            <p className="text-white text-lg font-semibold">Delete this message?</p>
+            <p className="text-gray-300 text-sm">
+              This will remove the message and its file (if any) from DriveChat.
+            </p>
+            <div className="flex gap-2 justify-center">
+              <button
+                onClick={() => performDelete(confirmDelete.id)}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg"
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="px-4 py-2 bg-gray-800 border border-gray-700 text-gray-200 rounded-lg"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1066,7 +1153,7 @@ export default function ChatInterface() {
                           : 'Done'}
                     </span>
                     <span>
-                      {pendingUpload.speed ? `${(pendingUpload.speed / 1024).toFixed(1)} KB/s` : ''}
+                      {pendingUpload.speed ? `${formatBytes(pendingUpload.speed)}/s` : ''}
                     </span>
                   </div>
                   {pendingUpload.error && (
@@ -1198,9 +1285,7 @@ export default function ChatInterface() {
                             <span className="truncate font-medium">{message.fileName}</span>
                           </div>
                           {message.fileSize && (
-                            <p className="text-xs opacity-75">
-                              {(message.fileSize / 1024).toFixed(2)} KB
-                            </p>
+                            <p className="text-xs opacity-75">{formatBytes(message.fileSize)}</p>
                           )}
 
                           {downloadState && (
@@ -1221,7 +1306,7 @@ export default function ChatInterface() {
                                     </span>
                                     <span>
                                       {downloadState.speed
-                                        ? `${(downloadState.speed / 1024).toFixed(1)} KB/s`
+                                        ? `${formatBytes(downloadState.speed)}/s`
                                         : ''}
                                     </span>
                                   </div>
@@ -1264,7 +1349,10 @@ export default function ChatInterface() {
                           </button>
                           {isSentByMe && (
                             <button
-                              onClick={() => deleteMessage(message.id)}
+                              onClick={() => {
+                                setConfirmDelete(message);
+                                closeContextMenu();
+                              }}
                               className="hover:scale-110 transition-transform text-red-400"
                             >
                               <Trash2 className="w-3 h-3" />
@@ -1356,7 +1444,7 @@ export default function ChatInterface() {
             )}
             <button
               onClick={() => {
-                deleteMessage(contextMenu.message.id);
+                setConfirmDelete(contextMenu.message);
                 closeContextMenu();
               }}
               className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-gray-700 flex items-center gap-2"

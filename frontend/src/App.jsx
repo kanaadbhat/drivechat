@@ -7,6 +7,7 @@ import ChatInterface from './components/ChatInterface';
 import StarredMessages from './components/StarredMessages';
 import SettingsPage from './components/SettingsPage';
 import ProtectedRoute from './components/ProtectedRoute';
+import PreChat from './components/PreChat';
 /* eslint-enable no-unused-vars */
 
 const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
@@ -18,6 +19,14 @@ function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/signin" element={<SignInPage />} />
+          <Route
+            path="/prechat"
+            element={
+              <ProtectedRoute>
+                <PreChat />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/chat"
             element={

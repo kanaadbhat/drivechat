@@ -9,8 +9,8 @@ export default function SignInPage() {
   useEffect(() => {
     // After successful sign-in, go straight to chat (Drive auth is client-side GIS)
     if (isSignedIn) {
-      console.log('✅ [SignInPage] User signed in, redirecting to chat...');
-      navigate('/chat');
+      console.log('✅ [SignInPage] User signed in, redirecting to pre-chat...');
+      navigate('/prechat');
     }
   }, [isSignedIn, navigate]);
 
@@ -39,8 +39,8 @@ export default function SignInPage() {
               identityPreviewEditButton: 'text-blue-400',
             },
           }}
-          redirectUrl="/chat"
-          afterSignInUrl="/chat"
+          redirectUrl="/prechat"
+          afterSignInUrl="/prechat"
         />
       </div>
     </div>

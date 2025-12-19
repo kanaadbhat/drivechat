@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Play, Pause, FileText, Download } from 'lucide-react';
+import { downloadFileFromDrive } from '../utils/gisClient';
 
 // Format duration from milliseconds to MM:SS or HH:MM:SS
 export function formatDuration(ms) {
@@ -69,25 +70,54 @@ export function ImagePreview({ message, getFileUrl, getThumbnailUrl }) {
 
 // Video preview - embeds Drive player
 export function VideoPreview({ message, getFileUrl }) {
-  const { fileId, fileName, durationMs } = message;
+  const { fileId, fileName, durationMs, mimeType } = message;
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [error, setError] = useState('');
 
-  // Use Google Drive embed for video playback
-  const embedUrl = `https://drive.google.com/file/d/${fileId}/preview`;
+  useEffect(() => {
+    let revokedUrl = '';
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const blob = await downloadFileFromDrive(fileId, mimeType);
+        if (cancelled) return;
+        revokedUrl = URL.createObjectURL(blob);
+        setPreviewUrl(revokedUrl);
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('Video preview failed', err?.message);
+        setError('Preview unavailable. Open in Drive instead.');
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+      if (revokedUrl) URL.revokeObjectURL(revokedUrl);
+    };
+  }, [fileId, mimeType]);
 
   return (
     <div className="relative max-w-xs">
-      <iframe
-        src={embedUrl}
-        className="w-64 h-48 rounded"
-        allow="autoplay; encrypted-media"
-        allowFullScreen
-        title={fileName}
-      />
+      {previewUrl ? (
+        <video src={previewUrl} className="w-64 h-48 rounded bg-black" controls />
+      ) : (
+        <div className="w-64 h-48 rounded bg-gray-800 flex items-center justify-center text-gray-400 text-xs">
+          {error || 'Loading preview...'}
+        </div>
+      )}
       {durationMs && (
         <div className="absolute bottom-2 right-2 bg-black bg-opacity-70 text-white px-2 py-1 rounded text-xs">
           {formatDuration(durationMs)}
         </div>
       )}
+      <div className="mt-2 text-xs text-gray-300">
+        <button
+          onClick={() => window.open(`https://drive.google.com/file/d/${fileId}/view`, '_blank')}
+          className="text-blue-400 hover:text-blue-300 underline"
+        >
+          Open in Google Drive
+        </button>
+      </div>
     </div>
   );
 }
@@ -147,15 +177,41 @@ export function AudioPreview({ message, getFileUrl }) {
 
 // PDF preview - uses Drive embed
 export function PDFPreview({ message }) {
-  const { fileId, fileName } = message;
+  const { fileId, fileName, mimeType } = message;
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let revokedUrl = '';
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const blob = await downloadFileFromDrive(fileId, mimeType || 'application/pdf');
+        if (cancelled) return;
+        revokedUrl = URL.createObjectURL(blob);
+        setPreviewUrl(revokedUrl);
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('PDF preview failed', err?.message);
+        setError('Preview unavailable. Open in Drive instead.');
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+      if (revokedUrl) URL.revokeObjectURL(revokedUrl);
+    };
+  }, [fileId, mimeType]);
 
   return (
     <div className="px-4 py-3 bg-gray-700/50 rounded">
-      <iframe
-        src={`https://drive.google.com/file/d/${fileId}/preview`}
-        className="w-64 h-80 rounded mb-3"
-        title={fileName}
-      />
+      {previewUrl ? (
+        <iframe src={previewUrl} className="w-64 h-80 rounded mb-3" title={fileName} />
+      ) : (
+        <div className="w-64 h-80 rounded mb-3 bg-gray-800 flex items-center justify-center text-gray-400 text-sm">
+          {error || 'Loading preview...'}
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <FileText className="w-5 h-5 text-red-400" />
         <div>
@@ -175,14 +231,13 @@ export function PDFPreview({ message }) {
 // Office document preview - uses Drive embed
 export function OfficePreview({ message }) {
   const { fileId, fileName } = message;
-
   return (
     <div className="px-4 py-3 bg-gray-700/50 rounded">
-      <iframe
-        src={`https://drive.google.com/file/d/${fileId}/preview`}
-        className="w-64 h-80 rounded mb-3"
-        title={fileName}
-      />
+      <div className="w-64 h-80 rounded mb-3 bg-gray-800 flex items-center justify-center">
+        <p className="text-sm text-gray-400">
+          Preview unavailable in-browser due to browser security.
+        </p>
+      </div>
       <div className="flex items-center gap-2">
         <FileText className="w-5 h-5 text-blue-400" />
         <div>

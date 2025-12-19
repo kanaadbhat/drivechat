@@ -47,6 +47,15 @@ export default function SettingsPage() {
   const [newDeviceType, setNewDeviceType] = useState(DEVICE_TYPES.GUEST);
   const [editingDevice, setEditingDevice] = useState(null);
 
+  const formatBytes = (bytes = 0, decimals = 1) => {
+    if (!bytes) return '0 B';
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+  };
+
   const fetchUserData = useCallback(async () => {
     try {
       setLoading(true);
@@ -410,7 +419,7 @@ export default function SettingsPage() {
                   </p>
                   {driveUsageBytes !== null && (
                     <p className="text-xs text-gray-400 mt-2">
-                      DriveChat folder size: {(driveUsageBytes / 1024 / 1024).toFixed(2)} MB
+                      DriveChat folder size: {formatBytes(driveUsageBytes)}
                     </p>
                   )}
                 </div>
@@ -473,9 +482,7 @@ export default function SettingsPage() {
                   <div className="bg-gray-800 rounded-lg p-4">
                     <p className="text-gray-400 text-sm">Storage Used</p>
                     <p className="text-white text-2xl font-bold">
-                      {driveUsageBytes !== null
-                        ? `${(driveUsageBytes / 1024 / 1024).toFixed(1)} MB`
-                        : '—'}
+                      {driveUsageBytes !== null ? formatBytes(driveUsageBytes) : '—'}
                     </p>
                   </div>
                 </div>

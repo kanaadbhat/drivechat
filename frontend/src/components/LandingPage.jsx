@@ -60,7 +60,7 @@ export default function LandingPage() {
             {isSignedIn ? (
               <div className="relative">
                 <button
-                  onClick={() => navigate('/chat')}
+                  onClick={() => navigate('/prechat')}
                   onContextMenu={(e) => {
                     e.preventDefault();
                     setShowProfileMenu((prev) => !prev);
@@ -78,7 +78,7 @@ export default function LandingPage() {
                     <button
                       onClick={() => {
                         setShowProfileMenu(false);
-                        navigate('/chat');
+                        navigate('/prechat');
                       }}
                       className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-800"
                     >
@@ -128,7 +128,7 @@ export default function LandingPage() {
               <div className="flex gap-4 justify-center flex-wrap">
                 {isSignedIn ? (
                   <button
-                    onClick={() => navigate('/chat')}
+                    onClick={() => navigate('/prechat')}
                     className="px-8 py-4 bg-linear-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-lg transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-105"
                   >
                     Go to Chat
@@ -189,7 +189,7 @@ export default function LandingPage() {
               </p>
               {isSignedIn ? (
                 <button
-                  onClick={() => navigate('/chat')}
+                  onClick={() => navigate('/prechat')}
                   className="px-8 py-4 bg-linear-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 rounded-lg font-semibold text-lg transition-all duration-200 shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:scale-105"
                 >
                   Go to Chat

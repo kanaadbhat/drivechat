@@ -45,3 +45,13 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* Ensure interactive controls show pointer cursor across the app */
+button,
+input[type='button'],
+input[type='submit'],
+a,
+[role='button'],
+.clickable {
+  cursor: pointer;
+}

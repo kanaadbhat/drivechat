@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import axios from 'axios';
 import {
@@ -11,14 +11,17 @@ import {
 
 const API_URL =
   import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+const PRECHAT_KEY = 'drivechat_prechat_passed';
 
 export default function PreChat() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { user } = useUser();
   const [status, setStatus] = useState('checking'); // checking | deleting | consenting | success | error
   const [error, setError] = useState('');
   const [pendingCount, setPendingCount] = useState(null);
+  const redirectTo = location.state?.redirect || '/chat';
 
   const ensureDriveAccess = useCallback(async () => {
     setStatus('consenting');
@@ -93,10 +96,29 @@ export default function PreChat() {
       if (!hasValidToken()) {
         await ensureDriveAccess();
       }
-      await syncPendingDeletions();
 
+      // Try to complete pending deletions, but if they don't finish within 3s,
+      // allow the user to pass while cleanup continues in the background.
+      const deletionPromise = syncPendingDeletions();
+      const deletionTimeout = new Promise((resolve) => setTimeout(() => resolve('timeout'), 3000));
+      const deletionResult = await Promise.race([
+        deletionPromise.then(() => 'ok'),
+        deletionTimeout,
+      ]);
+
+      if (deletionResult === 'timeout') {
+        console.warn(
+          '[PreChat] syncPendingDeletions timed out after 3s — proceeding while cleanup continues'
+        );
+        // Ensure we don't leave unhandled rejection if the background deletion fails later
+        deletionPromise.catch((err) =>
+          console.warn('[PreChat] background syncPendingDeletions failed', err)
+        );
+      }
+
+      localStorage.setItem(PRECHAT_KEY, String(Date.now()));
       setStatus('success');
-      navigate('/chat', { replace: true });
+      navigate(redirectTo, { replace: true });
     } catch (err) {
       const msg =
         err?.message === 'popup_closed_or_blocked'
@@ -104,8 +126,12 @@ export default function PreChat() {
           : err?.message || 'Drive access failed. Please retry.';
       setError(msg);
       setStatus('error');
+      localStorage.removeItem(PRECHAT_KEY);
+      if (pendingCount && pendingCount > 0) {
+        navigate('/', { replace: true });
+      }
     }
-  }, [ensureDriveAccess, isSignedIn, navigate, syncPendingDeletions]);
+  }, [ensureDriveAccess, isSignedIn, navigate, syncPendingDeletions, redirectTo, pendingCount]);
 
   useEffect(() => {
     if (!isLoaded) return;

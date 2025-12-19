@@ -17,16 +17,16 @@ let tokenPromiseReject = null;
 
 function loadStoredToken() {
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     const parsed = JSON.parse(raw);
     if (!parsed?.accessToken || !parsed?.expiresAt) return;
     if (Date.now() < parsed.expiresAt) {
       currentAccessToken = parsed.accessToken;
       tokenExpiresAt = parsed.expiresAt;
-      console.info('[gisClient] Loaded token from sessionStorage');
+      console.info('[gisClient] Loaded token from localStorage');
     } else {
-      sessionStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(STORAGE_KEY);
     }
   } catch (err) {
     console.warn('[gisClient] Failed to load stored token', err?.message);
@@ -36,7 +36,7 @@ function loadStoredToken() {
 function persistToken() {
   try {
     if (currentAccessToken && tokenExpiresAt) {
-      sessionStorage.setItem(
+      localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({ accessToken: currentAccessToken, expiresAt: tokenExpiresAt })
       );
@@ -48,7 +48,7 @@ function persistToken() {
 
 export function clearStoredToken() {
   try {
-    sessionStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(STORAGE_KEY);
   } catch (err) {
     console.warn('[gisClient] Failed to clear stored token', err?.message);
   }
@@ -115,7 +115,7 @@ export function hasValidToken() {
 export async function getAccessToken(options = {}) {
   const { prompt = false, login_hint } = options;
 
-  if (prompt === false && !login_hint && hasValidToken()) {
+  if (prompt !== true && prompt !== 'consent' && hasValidToken()) {
     return currentAccessToken;
   }
 

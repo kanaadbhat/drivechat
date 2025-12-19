@@ -610,6 +610,12 @@ export default function ChatInterface() {
       console.warn('Failed to clear GIS token on sign-out', err?.message);
     }
 
+    try {
+      localStorage.removeItem('drivechat_prechat_passed');
+    } catch (err) {
+      console.warn('Failed to clear prechat flag on sign-out', err?.message);
+    }
+
     await signOut();
     navigate('/');
   };

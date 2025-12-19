@@ -16,12 +16,20 @@ export default function ChatSidebar({
       } lg:translate-x-0 fixed lg:relative z-40 w-72 bg-gray-900 border-r border-gray-800 transition-transform duration-200 h-full flex flex-col`}
     >
       <div className="p-4 border-b border-gray-800 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => {
+            navigate('/');
+            setShowSidebar(false);
+          }}
+          className="flex items-center gap-3 focus:outline-none"
+          aria-label="Go to landing page"
+        >
           <div className="w-10 h-10 bg-linear-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
             <span className="text-xl">💬</span>
           </div>
           <span className="font-bold text-white">DriveChat</span>
-        </div>
+        </button>
         <button
           onClick={() => setShowSidebar(false)}
           className="lg:hidden text-gray-400 hover:text-white"

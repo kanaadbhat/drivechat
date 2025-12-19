@@ -11,6 +11,10 @@ router.use(requireAuth);
 // Get all messages
 router.get('/', asyncHandler(messageController.getMessages));
 
+// Pending Drive deletions (offline sync)
+router.get('/pending-deletions', asyncHandler(messageController.listPendingDeletions));
+router.post('/pending-deletions/ack', asyncHandler(messageController.ackPendingDeletions));
+
 // Search messages
 router.get('/search', asyncHandler(messageController.searchMessages));
 
@@ -31,6 +35,9 @@ router.post('/', asyncHandler(messageController.createMessage));
 
 // Update message (star/unstar, edit)
 router.patch('/:id', asyncHandler(messageController.updateMessage));
+
+// Ack client Drive executor status
+router.post('/:id/drive-ack', asyncHandler(messageController.ackDriveExecutor));
 
 // Delete message
 router.delete('/:id', asyncHandler(messageController.deleteMessage));

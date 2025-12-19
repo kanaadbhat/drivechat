@@ -14,10 +14,11 @@ import {
   Smartphone,
 } from 'lucide-react';
 import {
-  checkGoogleConnection,
-  saveClerkProviderTokens,
-  revokeGoogleTokens,
-} from '../utils/driveAuth.js';
+  initGisClient,
+  getAccessToken,
+  hasValidToken,
+  getDriveFolderUsage,
+} from '../utils/gisClient.js';
 import {
   getCurrentDevice,
   registerDevice,
@@ -38,6 +39,7 @@ export default function SettingsPage() {
   const [analytics, setAnalytics] = useState(null);
   const [googleConnected, setGoogleConnected] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [driveUsageBytes, setDriveUsageBytes] = useState(null);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [currentDevice, setCurrentDevice] = useState(null);
   const [showAddDevice, setShowAddDevice] = useState(false);
@@ -63,9 +65,18 @@ export default function SettingsPage() {
       });
       setAnalytics(analyticsRes.data);
 
-      // Check Google connection
-      const connRes = await checkGoogleConnection(getToken);
-      setGoogleConnected(connRes.connected);
+      // Check Google connection via GIS client
+      initGisClient();
+      const connected = hasValidToken();
+      setGoogleConnected(connected);
+      if (connected) {
+        try {
+          const usage = await getDriveFolderUsage();
+          setDriveUsageBytes(usage);
+        } catch (err) {
+          console.warn('Failed to fetch Drive usage', err?.message);
+        }
+      }
     } catch (error) {
       console.error('Error fetching user data:', error);
     } finally {
@@ -79,6 +90,13 @@ export default function SettingsPage() {
     const device = getCurrentDevice();
     setCurrentDevice(device);
   }, [fetchUserData]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setGoogleConnected(hasValidToken());
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   const removeDevice = async (deviceId) => {
     if (!confirm('Remove this device?')) return;
@@ -186,38 +204,23 @@ export default function SettingsPage() {
       setGoogleLoading(true);
       setMessage({ type: '', text: '' });
 
-      // Try to save Clerk provider tokens
-      await saveClerkProviderTokens(getToken);
+      // Use GIS to get access token (shows consent popup)
+      const loginHint = user?.primaryEmailAddress?.emailAddress;
+      await getAccessToken({ prompt: 'consent', login_hint: loginHint });
 
       setMessage({ type: 'success', text: 'Google Drive connected successfully!' });
       setGoogleConnected(true);
+      try {
+        const usage = await getDriveFolderUsage();
+        setDriveUsageBytes(usage);
+      } catch (err) {
+        console.warn('Failed to refresh Drive usage after connect', err?.message);
+      }
     } catch (error) {
       console.error('Error connecting Google:', error);
       setMessage({
         type: 'error',
-        text: error.response?.data?.error || 'Failed to connect Google Drive',
-      });
-    } finally {
-      setGoogleLoading(false);
-    }
-  };
-
-  const handleDisconnectGoogle = async () => {
-    if (!confirm('Disconnect Google Drive? You will need to reconnect to upload files.')) return;
-
-    try {
-      setGoogleLoading(true);
-      setMessage({ type: '', text: '' });
-
-      await revokeGoogleTokens(getToken);
-
-      setMessage({ type: 'success', text: 'Google Drive disconnected.' });
-      setGoogleConnected(false);
-    } catch (error) {
-      console.error('Error disconnecting Google:', error);
-      setMessage({
-        type: 'error',
-        text: error.response?.data?.error || 'Failed to disconnect Google Drive',
+        text: error.message || 'Failed to connect Google Drive',
       });
     } finally {
       setGoogleLoading(false);
@@ -405,17 +408,22 @@ export default function SettingsPage() {
                       ? 'You can upload files from Google Drive to chat'
                       : 'Connect your Google Drive to share files in conversations'}
                   </p>
+                  {driveUsageBytes !== null && (
+                    <p className="text-xs text-gray-400 mt-2">
+                      DriveChat folder size: {(driveUsageBytes / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                  )}
                 </div>
                 <button
-                  onClick={googleConnected ? handleDisconnectGoogle : handleConnectGoogle}
+                  onClick={handleConnectGoogle}
                   disabled={googleLoading}
                   className={`px-4 py-2 rounded-lg transition-colors font-medium ${
                     googleConnected
-                      ? 'bg-red-500/20 hover:bg-red-500/30 text-red-400 disabled:opacity-50'
+                      ? 'bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 disabled:opacity-50'
                       : 'bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 disabled:opacity-50'
                   }`}
                 >
-                  {googleLoading ? 'Processing...' : googleConnected ? 'Disconnect' : 'Connect'}
+                  {googleLoading ? 'Processing...' : googleConnected ? 'Refresh Status' : 'Connect'}
                 </button>
               </div>
             </div>
@@ -465,9 +473,9 @@ export default function SettingsPage() {
                   <div className="bg-gray-800 rounded-lg p-4">
                     <p className="text-gray-400 text-sm">Storage Used</p>
                     <p className="text-white text-2xl font-bold">
-                      {analytics.analytics?.storageUsedBytes
-                        ? `${(analytics.analytics.storageUsedBytes / 1024 / 1024).toFixed(1)} MB`
-                        : '0 MB'}
+                      {driveUsageBytes !== null
+                        ? `${(driveUsageBytes / 1024 / 1024).toFixed(1)} MB`
+                        : '—'}
                     </p>
                   </div>
                 </div>

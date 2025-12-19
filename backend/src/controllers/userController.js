@@ -1,8 +1,7 @@
 import { firestoreHelpers } from '../config/firebase.js';
 import { nanoid } from 'nanoid';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import { getOAuthClientForUser, clearStoredTokens } from '../utils/googleAuth.js';
-import { google } from 'googleapis';
+import { publishUserEvent } from '../realtime/realtimeHub.js';
 
 /**
  * Get current user profile
@@ -264,40 +263,8 @@ export const getAnalytics = asyncHandler(async (req, res) => {
   const fileMessages = allMessages.filter((msg) => msg.type === 'file');
   const totalFilesCount = fileMessages.length;
 
-  // Calculate storage from Google Drive
-  let storageUsedBytes = 0;
-  try {
-    const oauth2Client = await getOAuthClientForUser(userId);
-    const drive = google.drive({ version: 'v3', auth: oauth2Client });
-
-    // Search for DriveChat folder
-    const folderQuery = await drive.files.list({
-      q: `name='DriveChat' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-      fields: 'files(id)',
-      spaces: 'drive',
-    });
-
-    if (folderQuery.data.files && folderQuery.data.files.length > 0) {
-      const folderId = folderQuery.data.files[0].id;
-
-      // Get all files in the DriveChat folder
-      const filesQuery = await drive.files.list({
-        q: `'${folderId}' in parents and trashed=false`,
-        fields: 'files(size)',
-        pageSize: 1000,
-      });
-
-      // Sum up all file sizes
-      if (filesQuery.data.files) {
-        storageUsedBytes = filesQuery.data.files.reduce((total, file) => {
-          return total + (parseInt(file.size) || 0);
-        }, 0);
-      }
-    }
-  } catch (driveError) {
-    console.error('[getAnalytics] Error calculating Drive storage:', driveError.message);
-    // Continue without storage data if Drive access fails
-  }
+  // Server no longer queries Drive for storage; client computes if needed
+  const storageUsedBytes = null;
 
   res.json({
     analytics: {
@@ -324,30 +291,26 @@ export const deleteAccount = asyncHandler(async (req, res) => {
   const messages = await firestoreHelpers.getUserMessages(userId, 10000);
   const fileMessages = messages.filter((msg) => msg.type === 'file' && msg.fileId);
 
-  let filesDeleted = 0;
-
-  // Step 2: Delete files from Google Drive
+  // Step 2: Client-side Drive deletion requested via realtime; backend does not call Drive
   if (fileMessages.length > 0) {
-    try {
-      const oauth2Client = await getOAuthClientForUser(userId);
-      const drive = google.drive({ version: 'v3', auth: oauth2Client });
-
-      console.log(`[deleteAccount] Deleting ${fileMessages.length} files from Google Drive...`);
-
-      await Promise.allSettled(
-        fileMessages.map(async (msg) => {
-          try {
-            await drive.files.delete({ fileId: msg.fileId });
-            filesDeleted++;
-            console.log(`[deleteAccount] ✅ Deleted file: ${msg.fileId}`);
-          } catch (error) {
-            console.error(`[deleteAccount] ⚠️ Failed to delete file ${msg.fileId}:`, error.message);
-          }
-        })
-      );
-    } catch (driveError) {
-      console.error(`[deleteAccount] ⚠️ Drive API error:`, driveError.message);
-    }
+    await Promise.all(
+      fileMessages.map(async (msg) => {
+        try {
+          await publishUserEvent(userId, {
+            type: 'drive.delete.request',
+            messageId: msg.id,
+            payload: {
+              fileId: msg.fileId,
+              fileFolderId: msg.fileFolderId || null,
+              mimeType: msg.mimeType,
+              fileName: msg.fileName,
+            },
+          });
+        } catch {
+          // non-fatal
+        }
+      })
+    );
   }
 
   // Step 3: Delete all messages from Firestore
@@ -355,9 +318,13 @@ export const deleteAccount = asyncHandler(async (req, res) => {
   const deletePromises = messages.map((msg) => firestoreHelpers.deleteMessage(userId, msg.id));
   await Promise.all(deletePromises);
 
-  // Step 4: Clear stored OAuth tokens
-  console.log(`[deleteAccount] Clearing OAuth tokens...`);
-  await clearStoredTokens(userId);
+  // Step 4: Clear stored Drive metadata (tokens are managed client-side)
+  console.log(`[deleteAccount] Clearing Drive metadata from user profile...`);
+  try {
+    await firestoreHelpers.setUserDoc(userId, { driveConnected: false, driveFolderId: null });
+  } catch (err) {
+    console.warn('[deleteAccount] Failed to clear drive metadata:', err?.message || err);
+  }
 
   // Step 5: Delete user profile from Firestore
   console.log(`[deleteAccount] Deleting user profile...`);
@@ -369,6 +336,6 @@ export const deleteAccount = asyncHandler(async (req, res) => {
     success: true,
     message: 'Account deleted successfully',
     messagesDeleted: messages.length,
-    filesDeleted,
+    filesDeleted: fileMessages.length,
   });
 });

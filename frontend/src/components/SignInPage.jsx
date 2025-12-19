@@ -7,10 +7,10 @@ export default function SignInPage() {
   const { isSignedIn } = useAuth();
 
   useEffect(() => {
-    // After successful sign-in, redirect to authorization page
+    // After successful sign-in, go straight to chat (Drive auth is client-side GIS)
     if (isSignedIn) {
-      console.log('✅ [SignInPage] User signed in, redirecting to authorization page...');
-      navigate('/authorize');
+      console.log('✅ [SignInPage] User signed in, redirecting to chat...');
+      navigate('/chat');
     }
   }, [isSignedIn, navigate]);
 
@@ -39,8 +39,8 @@ export default function SignInPage() {
               identityPreviewEditButton: 'text-blue-400',
             },
           }}
-          redirectUrl="/authorize"
-          afterSignInUrl="/authorize"
+          redirectUrl="/chat"
+          afterSignInUrl="/chat"
         />
       </div>
     </div>

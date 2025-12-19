@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ClerkProvider } from '@clerk/clerk-react';
 import LandingPage from './components/LandingPage';
 import SignInPage from './components/SignInPage';
-import AuthorizationPage from './components/AuthorizationPage';
 import ChatInterface from './components/ChatInterface';
 import StarredMessages from './components/StarredMessages';
 import SettingsPage from './components/SettingsPage';
@@ -19,14 +18,6 @@ function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/signin" element={<SignInPage />} />
-          <Route
-            path="/authorize"
-            element={
-              <ProtectedRoute>
-                <AuthorizationPage />
-              </ProtectedRoute>
-            }
-          />
           <Route
             path="/chat"
             element={

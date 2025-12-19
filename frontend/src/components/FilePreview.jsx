@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { Play, Pause, FileText, Download } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
-
 // Format duration from milliseconds to MM:SS or HH:MM:SS
 export function formatDuration(ms) {
   if (!ms) return '0:00';
@@ -22,7 +20,7 @@ export function formatDuration(ms) {
 function PreviewSkeleton({ className = '' }) {
   return (
     <div className={`animate-pulse ${className}`}>
-      <div className="bg-gray-700 rounded"></div>
+      <div className="bg-gray-700 rounded w-full h-full"></div>
     </div>
   );
 }
@@ -37,86 +35,54 @@ function PreviewError({ fileName, error }) {
   );
 }
 
-// Image preview with responsive sizes
-export function ImagePreview({ message, authenticatedUrls }) {
-  const { thumbStatus, thumbnailSizes, fileId, fileName } = message;
+// Image preview - uses Drive direct URLs (files are public via "anyone with link")
+export function ImagePreview({ message, getFileUrl, getThumbnailUrl }) {
+  const { fileId, fileName } = message;
 
-  if (thumbStatus === 'generating') {
-    return <PreviewSkeleton className="w-64 h-64" />;
-  }
+  // Use Drive thumbnail URL for preview (faster loading)
+  const thumbnailUrl = getThumbnailUrl?.(fileId, 400) || getFileUrl?.(fileId);
+  const fullUrl = getFileUrl?.(fileId);
 
-  if (thumbStatus === 'failed') {
-    return <PreviewError fileName={fileName} error={message.thumbError} />;
-  }
-
-  // Use medium thumbnail by default
-  const thumbnailId = thumbnailSizes?.medium?.id || fileId;
-  const imageUrl = authenticatedUrls[thumbnailId] || authenticatedUrls[fileId];
-
-  if (!imageUrl) {
+  if (!thumbnailUrl) {
     return <PreviewSkeleton className="w-32 h-32" />;
   }
 
   return (
     <img
-      src={imageUrl}
+      src={thumbnailUrl}
       alt={fileName}
       className="max-w-xs max-h-64 rounded cursor-pointer object-cover"
       onClick={() => window.open(`https://drive.google.com/file/d/${fileId}/view`, '_blank')}
       onError={(e) => {
-        console.error('Image load error for thumbnail:', thumbnailId, 'original file:', fileId);
-        console.error('Failed URL:', imageUrl);
-        e.target.style.display = 'none';
+        console.error('Image load error for:', fileId);
+        // Fallback to full URL if thumbnail fails
+        if (fullUrl && e.target.src !== fullUrl) {
+          e.target.src = fullUrl;
+        } else {
+          e.target.style.display = 'none';
+        }
       }}
       loading="lazy"
     />
   );
 }
 
-// Video preview with poster and duration
-export function VideoPreview({ message, authenticatedUrls }) {
-  const { thumbStatus, posterDriveFileId, fileId, fileName, durationMs } = message;
+// Video preview - embeds Drive player
+export function VideoPreview({ message, getFileUrl }) {
+  const { fileId, fileName, durationMs } = message;
 
-  if (thumbStatus === 'generating') {
-    return (
-      <div className="relative">
-        <PreviewSkeleton className="w-64 h-48" />
-        <p className="text-xs text-gray-400 mt-2">Generating preview...</p>
-      </div>
-    );
-  }
-
-  if (thumbStatus === 'failed') {
-    return <PreviewError fileName={fileName} error={message.thumbError} />;
-  }
-
-  const videoUrl = authenticatedUrls[fileId];
-  const posterUrl = posterDriveFileId ? authenticatedUrls[posterDriveFileId] : null;
-
-  if (!videoUrl) {
-    return (
-      <div className="flex items-center justify-center w-64 h-48 bg-gray-700 rounded">
-        <span className="text-gray-400 text-xs">Loading video...</span>
-      </div>
-    );
-  }
+  // Use Google Drive embed for video playback
+  const embedUrl = `https://drive.google.com/file/d/${fileId}/preview`;
 
   return (
-    <div className="relative">
-      <video
-        controls
-        controlsList="nodownload"
-        poster={posterUrl || undefined}
-        className="max-w-xs max-h-64 rounded"
-        preload="metadata"
-        onError={(e) => {
-          console.error('Video load error for', fileId);
-          e.target.style.display = 'none';
-        }}
-      >
-        <source src={videoUrl} type={message.mimeType} />
-        Your browser does not support the video tag.
-      </video>
+    <div className="relative max-w-xs">
+      <iframe
+        src={embedUrl}
+        className="w-64 h-48 rounded"
+        allow="autoplay; encrypted-media"
+        allowFullScreen
+        title={fileName}
+      />
       {durationMs && (
         <div className="absolute bottom-2 right-2 bg-black bg-opacity-70 text-white px-2 py-1 rounded text-xs">
           {formatDuration(durationMs)}
@@ -126,26 +92,12 @@ export function VideoPreview({ message, authenticatedUrls }) {
   );
 }
 
-// Audio preview with waveform
-export function AudioPreview({ message, authenticatedUrls }) {
+// Audio preview - simple audio player
+export function AudioPreview({ message, getFileUrl }) {
   const [isPlaying, setIsPlaying] = useState(false);
-  const { thumbStatus, waveformDriveFileId, fileId, fileName, durationMs } = message;
+  const { fileId, fileName, durationMs } = message;
 
-  if (thumbStatus === 'generating') {
-    return (
-      <div className="flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg w-full max-w-xs">
-        <PreviewSkeleton className="w-10 h-10 rounded-full" />
-        <PreviewSkeleton className="flex-1 h-12" />
-      </div>
-    );
-  }
-
-  if (thumbStatus === 'failed') {
-    return <PreviewError fileName={fileName} error={message.thumbError} />;
-  }
-
-  const audioUrl = authenticatedUrls[fileId];
-  const waveformUrl = waveformDriveFileId ? authenticatedUrls[waveformDriveFileId] : null;
+  const audioUrl = getFileUrl?.(fileId);
 
   if (!audioUrl) {
     return (
@@ -176,21 +128,7 @@ export function AudioPreview({ message, authenticatedUrls }) {
           {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
         </button>
 
-        {waveformUrl ? (
-          <div className="flex-1">
-            <img
-              src={waveformUrl}
-              alt="Waveform"
-              className="w-full h-12 object-cover"
-              onError={(e) => {
-                console.error('Waveform load error');
-                e.target.style.display = 'none';
-              }}
-            />
-          </div>
-        ) : (
-          <div className="flex-1 h-12 bg-gray-600 rounded"></div>
-        )}
+        <div className="flex-1 h-12 bg-gray-600 rounded"></div>
 
         {durationMs && (
           <span className="text-xs text-gray-400 flex-shrink-0">{formatDuration(durationMs)}</span>
@@ -207,39 +145,17 @@ export function AudioPreview({ message, authenticatedUrls }) {
   );
 }
 
-// PDF preview with first page thumbnail
-export function PDFPreview({ message, authenticatedUrls }) {
-  const { thumbStatus, pdfFirstPageDriveFileId, fileId, fileName } = message;
-
-  if (thumbStatus === 'generating') {
-    return (
-      <div className="px-4 py-3 bg-gray-700/50 rounded">
-        <PreviewSkeleton className="w-48 h-64 mb-2" />
-        <p className="text-xs text-gray-400">Generating PDF preview...</p>
-      </div>
-    );
-  }
-
-  if (thumbStatus === 'failed') {
-    return <PreviewError fileName={fileName} error={message.thumbError} />;
-  }
-
-  const firstPageUrl = pdfFirstPageDriveFileId ? authenticatedUrls[pdfFirstPageDriveFileId] : null;
+// PDF preview - uses Drive embed
+export function PDFPreview({ message }) {
+  const { fileId, fileName } = message;
 
   return (
     <div className="px-4 py-3 bg-gray-700/50 rounded">
-      {firstPageUrl && (
-        <img
-          src={firstPageUrl}
-          alt={`${fileName} - First Page`}
-          className="max-w-xs max-h-64 rounded mb-3 cursor-pointer"
-          onClick={() => window.open(`https://drive.google.com/file/d/${fileId}/view`, '_blank')}
-          onError={(e) => {
-            console.error('PDF preview load error');
-            e.target.style.display = 'none';
-          }}
-        />
-      )}
+      <iframe
+        src={`https://drive.google.com/file/d/${fileId}/preview`}
+        className="w-64 h-80 rounded mb-3"
+        title={fileName}
+      />
       <div className="flex items-center gap-2">
         <FileText className="w-5 h-5 text-red-400" />
         <div>
@@ -256,39 +172,17 @@ export function PDFPreview({ message, authenticatedUrls }) {
   );
 }
 
-// Office document preview (uses PDF export first page)
-export function OfficePreview({ message, authenticatedUrls }) {
-  const { thumbStatus, pdfFirstPageDriveFileId, fileId, fileName } = message;
-
-  if (thumbStatus === 'generating') {
-    return (
-      <div className="px-4 py-3 bg-gray-700/50 rounded">
-        <PreviewSkeleton className="w-48 h-64 mb-2" />
-        <p className="text-xs text-gray-400">Generating preview...</p>
-      </div>
-    );
-  }
-
-  if (thumbStatus === 'failed') {
-    return <PreviewError fileName={fileName} error={message.thumbError} />;
-  }
-
-  const firstPageUrl = pdfFirstPageDriveFileId ? authenticatedUrls[pdfFirstPageDriveFileId] : null;
+// Office document preview - uses Drive embed
+export function OfficePreview({ message }) {
+  const { fileId, fileName } = message;
 
   return (
     <div className="px-4 py-3 bg-gray-700/50 rounded">
-      {firstPageUrl && (
-        <img
-          src={firstPageUrl}
-          alt={`${fileName} - Preview`}
-          className="max-w-xs max-h-64 rounded mb-3 cursor-pointer"
-          onClick={() => window.open(`https://drive.google.com/file/d/${fileId}/view`, '_blank')}
-          onError={(e) => {
-            console.error('Office preview load error');
-            e.target.style.display = 'none';
-          }}
-        />
-      )}
+      <iframe
+        src={`https://drive.google.com/file/d/${fileId}/preview`}
+        className="w-64 h-80 rounded mb-3"
+        title={fileName}
+      />
       <div className="flex items-center gap-2">
         <FileText className="w-5 h-5 text-blue-400" />
         <div>
@@ -328,7 +222,7 @@ export function GenericFilePreview({ message }) {
 
 // Helper to determine Office file type
 function getOfficeFileType(fileName) {
-  const ext = fileName.split('.').pop()?.toLowerCase();
+  const ext = fileName?.split('.').pop()?.toLowerCase();
   switch (ext) {
     case 'docx':
     case 'doc':
@@ -344,25 +238,34 @@ function getOfficeFileType(fileName) {
   }
 }
 
-// Main FilePreview component that routes to appropriate preview type
-export default function FilePreview({ message, authenticatedUrls }) {
+/**
+ * Main FilePreview component that routes to appropriate preview type
+ *
+ * Props:
+ * - message: Message object with file metadata
+ * - getFileUrl: Function to get Drive content URL for a file ID
+ * - getThumbnailUrl: Function to get Drive thumbnail URL for a file ID
+ */
+export default function FilePreview({ message, getFileUrl, getThumbnailUrl }) {
   const { mimeType, fileName } = message;
 
-  // Determine file category
+  // Determine file category and render appropriate preview
   if (mimeType?.startsWith('image/')) {
-    return <ImagePreview message={message} authenticatedUrls={authenticatedUrls} />;
+    return (
+      <ImagePreview message={message} getFileUrl={getFileUrl} getThumbnailUrl={getThumbnailUrl} />
+    );
   }
 
   if (mimeType?.startsWith('video/')) {
-    return <VideoPreview message={message} authenticatedUrls={authenticatedUrls} />;
+    return <VideoPreview message={message} getFileUrl={getFileUrl} />;
   }
 
   if (mimeType?.startsWith('audio/')) {
-    return <AudioPreview message={message} authenticatedUrls={authenticatedUrls} />;
+    return <AudioPreview message={message} getFileUrl={getFileUrl} />;
   }
 
   if (mimeType === 'application/pdf') {
-    return <PDFPreview message={message} authenticatedUrls={authenticatedUrls} />;
+    return <PDFPreview message={message} />;
   }
 
   // Office documents
@@ -372,7 +275,7 @@ export default function FilePreview({ message, authenticatedUrls }) {
     mimeType?.includes('ms-excel') ||
     mimeType?.includes('ms-powerpoint')
   ) {
-    return <OfficePreview message={message} authenticatedUrls={authenticatedUrls} />;
+    return <OfficePreview message={message} />;
   }
 
   // Generic file preview for unsupported types

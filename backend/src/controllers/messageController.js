@@ -1,7 +1,5 @@
 import { firestoreHelpers, admin } from '../config/firebase.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import { getOAuthClientForUser } from '../utils/googleAuth.js';
-import { google } from 'googleapis';
 import { scheduleMessageDeletion, cancelMessageDeletion } from '../queues/cleanupQueue.js';
 import { publishUserEvent } from '../realtime/realtimeHub.js';
 
@@ -111,6 +109,9 @@ export const createMessage = asyncHandler(async (req, res) => {
     messageData.mimeType = mimeType || 'application/octet-stream';
     messageData.fileCategory = fileCategory || 'others';
     messageData.filePreviewUrl = filePreviewUrl || null;
+    messageData.fileCiphertext = req.body.fileCiphertext || null;
+    messageData.encryption = req.body.encryption || null;
+    messageData.filePreview = req.body.filePreview || null;
   }
 
   // Create message in Firestore
@@ -128,44 +129,7 @@ export const createMessage = asyncHandler(async (req, res) => {
     // non-fatal
   }
 
-  // If this is a file message, queue preview generation NOW (with messageId)
-  if (type === 'file' && fileId) {
-    const { queuePreviewGeneration } = await import('../queues/previewQueue.js');
-
-    try {
-      console.log(
-        `[messageController] 📋 Queueing preview generation for ${fileId} with messageId ${message.id}`
-      );
-
-      // Get the parent folder ID from the file metadata
-      const oauth2Client = await import('../utils/googleAuth.js').then((m) =>
-        m.getOAuthClientForUser(userId)
-      );
-      const { google } = await import('googleapis');
-      const drive = google.drive({ version: 'v3', auth: oauth2Client });
-
-      const fileMetadata = await drive.files.get({
-        fileId,
-        fields: 'parents',
-      });
-
-      const parentFolderId = fileMetadata.data.parents?.[0];
-
-      await queuePreviewGeneration({
-        userId,
-        messageId: message.id, // ✅ messageId is now available!
-        fileId,
-        parentFolderId,
-        mimeType: mimeType || 'application/octet-stream',
-        fileName,
-      });
-
-      console.log(`[messageController] ✅ Preview generation queued successfully`);
-    } catch (error) {
-      console.error(`[messageController] ⚠️ Failed to queue preview generation:`, error.message);
-      // Don't fail the message creation if preview queueing fails
-    }
-  }
+  // File previews are now client-managed; no server-side queueing
 
   // Schedule auto-deletion if message has expiry (disabled for now)
   // if (messageData.expiresAt && !messageData.starred) {
@@ -294,27 +258,30 @@ export const deleteMessage = asyncHandler(async (req, res) => {
     });
   }
 
-  // If it's a file message, delete from Google Drive first
+  // If it's a file message, request client-side Drive cleanup via realtime
   if (message.type === 'file' && message.fileId) {
     try {
-      const oauth2Client = await getOAuthClientForUser(userId);
-      const drive = google.drive({ version: 'v3', auth: oauth2Client });
+      await firestoreHelpers.addPendingDeletion(userId, {
+        messageId: id,
+        fileId: message.fileId,
+        fileFolderId: message.fileFolderId || null,
+        mimeType: message.mimeType,
+        fileName: message.fileName,
+        reason: 'user-delete',
+      });
 
-      // If message has fileFolderId, delete the entire folder (contains original + all previews)
-      if (message.fileFolderId) {
-        console.log(`[deleteMessage] Deleting folder ${message.fileFolderId} from Google Drive...`);
-        await drive.files.delete({ fileId: message.fileFolderId });
-        console.log(`[deleteMessage] ✅ Folder ${message.fileFolderId} deleted from Drive`);
-      } else {
-        // Fallback: delete just the original file if no folder ID
-        console.log(`[deleteMessage] Deleting file ${message.fileId} from Google Drive...`);
-        await drive.files.delete({ fileId: message.fileId });
-        console.log(`[deleteMessage] ✅ File ${message.fileId} deleted from Drive`);
-      }
-    } catch (driveError) {
-      console.error(`[deleteMessage] ⚠️ Failed to delete from Drive:`, driveError.message);
-      // Continue with message deletion even if Drive deletion fails
-      // The file might already be deleted or user lost access
+      await publishUserEvent(userId, {
+        type: 'drive.delete.request',
+        messageId: id,
+        payload: {
+          fileId: message.fileId,
+          fileFolderId: message.fileFolderId || null,
+          mimeType: message.mimeType,
+          fileName: message.fileName,
+        },
+      });
+    } catch {
+      // non-fatal
     }
   }
 
@@ -359,6 +326,31 @@ export const searchMessages = asyncHandler(async (req, res) => {
     count: messages.length,
     query: q,
   });
+});
+
+/**
+ * List pending Drive deletions (for offline sync)
+ */
+export const listPendingDeletions = asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const pending = await firestoreHelpers.listPendingDeletions(userId);
+  res.json({ pending });
+});
+
+/**
+ * Acknowledge completed Drive deletions and clear pending records
+ */
+export const ackPendingDeletions = asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { messageIds = [] } = req.body || {};
+
+  if (!Array.isArray(messageIds) || messageIds.length === 0) {
+    return res.status(400).json({ error: 'messageIds array required' });
+  }
+
+  await firestoreHelpers.removePendingDeletions(userId, messageIds);
+
+  res.json({ acknowledged: messageIds });
 });
 
 /**
@@ -410,48 +402,39 @@ export const deleteAllMessages = asyncHandler(async (req, res) => {
   let filesDeleted = 0;
   let filesFailed = 0;
 
-  // Delete files from Google Drive first
+  // Request client-side Drive cleanup via realtime events
   const fileMessages = messages.filter((msg) => msg.type === 'file' && msg.fileId);
 
   if (fileMessages.length > 0) {
-    try {
-      const oauth2Client = await getOAuthClientForUser(userId);
-      const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    await Promise.all(
+      fileMessages.map(async (msg) => {
+        try {
+          await firestoreHelpers.addPendingDeletion(userId, {
+            messageId: msg.id,
+            fileId: msg.fileId,
+            fileFolderId: msg.fileFolderId || null,
+            mimeType: msg.mimeType,
+            fileName: msg.fileName,
+            reason: 'bulk-delete',
+          });
 
-      console.log(
-        `[deleteAllMessages] Deleting ${fileMessages.length} file folders from Google Drive...`
-      );
-
-      // Delete file folders (containing original + all previews) in parallel
-      await Promise.allSettled(
-        fileMessages.map(async (msg) => {
-          try {
-            // If message has fileFolderId, delete the entire folder (contains original + previews)
-            if (msg.fileFolderId) {
-              await drive.files.delete({ fileId: msg.fileFolderId });
-              filesDeleted++;
-              console.log(
-                `[deleteAllMessages] ✅ Deleted folder: ${msg.fileFolderId} (${msg.fileName})`
-              );
-            } else {
-              // Fallback: delete just the original file if no folder ID
-              await drive.files.delete({ fileId: msg.fileId });
-              filesDeleted++;
-              console.log(`[deleteAllMessages] ✅ Deleted file: ${msg.fileId}`);
-            }
-          } catch (error) {
-            filesFailed++;
-            console.error(
-              `[deleteAllMessages] ⚠️ Failed to delete ${msg.fileFolderId || msg.fileId}:`,
-              error.message
-            );
-          }
-        })
-      );
-    } catch (driveError) {
-      console.error(`[deleteAllMessages] ⚠️ Drive API error:`, driveError.message);
-      // Continue with Firestore deletion even if Drive fails
-    }
+          await publishUserEvent(userId, {
+            type: 'drive.delete.request',
+            messageId: msg.id,
+            payload: {
+              fileId: msg.fileId,
+              fileFolderId: msg.fileFolderId || null,
+              mimeType: msg.mimeType,
+              fileName: msg.fileName,
+            },
+          });
+          filesDeleted++;
+        } catch {
+          // non-fatal
+          filesFailed++;
+        }
+      })
+    );
   }
 
   // Delete all messages from Firestore
@@ -484,6 +467,42 @@ export const deleteAllMessages = asyncHandler(async (req, res) => {
     filesDeleted,
     filesFailed,
   });
+});
+
+/**
+ * Record client Drive executor status (best-effort, no plaintext IDs required)
+ */
+export const ackDriveExecutor = asyncHandler(async (req, res) => {
+  const { userId } = req;
+  const { id } = req.params;
+  const { status = 'unknown', details = null } = req.body || {};
+
+  const message = await firestoreHelpers.getMessage(userId, id);
+
+  if (!message) {
+    return res.status(404).json({ error: 'Message not found' });
+  }
+
+  const update = {
+    driveCleanupStatus: status,
+    driveCleanupAt: new Date().toISOString(),
+    ...(details ? { driveCleanupDetails: details } : {}),
+  };
+
+  await firestoreHelpers.updateMessage(userId, id, update);
+
+  try {
+    await publishUserEvent(userId, {
+      type: 'drive.cleanup.ack',
+      messageId: id,
+      firestorePath: `users/${userId}/messages/${id}`,
+      patch: update,
+    });
+  } catch {
+    // non-fatal
+  }
+
+  res.json({ success: true });
 });
 
 /**

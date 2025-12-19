@@ -1,5 +1,5 @@
 import { triggerImmediateCleanup } from '../queues/cleanupQueue.js';
-import { cleanupQueue, fileQueue, previewQueue } from '../queues/index.js';
+import { cleanupQueue } from '../queues/index.js';
 
 import { asyncHandler } from '../utils/asyncHandler.js';
 
@@ -20,17 +20,13 @@ export const triggerCleanup = asyncHandler(async (req, res) => {
  * Get cleanup statistics
  */
 export const getCleanupStats = asyncHandler(async (req, res) => {
-  const [cleanupCounts, fileCounts, previewCounts] = await Promise.all([
-    cleanupQueue.getJobCounts(),
-    fileQueue.getJobCounts(),
-    previewQueue.getJobCounts(),
-  ]);
+  const cleanupCounts = await cleanupQueue.getJobCounts();
 
   res.json({
     stats: {
       cleanup: cleanupCounts,
-      file: fileCounts,
-      preview: previewCounts,
+      file: {},
+      preview: {},
     },
   });
 });

@@ -37,8 +37,20 @@ import {
   deleteMessage as dexieDeleteMessage,
   loadMessages,
   upsertMessage,
+  clearAllUserData,
 } from '../db/dexie';
 import { createRealtimeClient } from '../utils/realtimeClient';
+import {
+  initGisClient,
+  getAccessToken,
+  hasValidToken,
+  uploadFileToDrive,
+  deleteFileFromDrive,
+  getDriveContentUrl,
+  getDriveThumbnailUrl,
+  revokeToken,
+  clearStoredToken,
+} from '../utils/gisClient';
 
 dayjs.extend(relativeTime);
 
@@ -60,16 +72,27 @@ export default function ChatInterface() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [showStarredOnly, setShowStarredOnly] = useState(false);
-  const [googleConnected, setGoogleConnected] = useState(false);
+  const [driveAuthorized, setDriveAuthorized] = useState(false);
   const [contextMenu, setContextMenu] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   const [editText, setEditText] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const [authenticatedUrls, setAuthenticatedUrls] = useState({});
+  const [pendingUpload, setPendingUpload] = useState(null);
+  const [downloadStates, setDownloadStates] = useState({});
+  const [deleteErrors, setDeleteErrors] = useState({});
   const [currentDevice, setCurrentDevice] = useState(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
   const realtimeRef = useRef(null);
+  const [showDrivePrompt, setShowDrivePrompt] = useState(false);
+  const [authState, setAuthState] = useState({ status: 'idle', message: '' });
+  // Initialize GIS on mount
+  useEffect(() => {
+    initGisClient();
+    const authorized = hasValidToken();
+    setDriveAuthorized(authorized);
+    setShowDrivePrompt(!authorized);
+  }, []);
 
   useEffect(() => {
     console.info('[ChatInterface] realtime config', {
@@ -83,6 +106,47 @@ export default function ChatInterface() {
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+
+  const syncPendingDeletions = useCallback(async () => {
+    try {
+      const token = await getToken();
+      if (!token) return;
+
+      const res = await axios.get(`${API_URL}/api/messages/pending-deletions`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const pending = res.data?.pending || [];
+      if (!pending.length) return;
+
+      const acknowledged = [];
+
+      for (const item of pending) {
+        const fileId = item.fileId;
+        if (!fileId) continue;
+        try {
+          await deleteFileFromDrive(fileId);
+          acknowledged.push(item.id || item.messageId || fileId);
+        } catch (err) {
+          console.warn('[syncPendingDeletions] Failed to delete Drive file', fileId, err?.message);
+        }
+      }
+
+      if (acknowledged.length) {
+        try {
+          await axios.post(
+            `${API_URL}/api/messages/pending-deletions/ack`,
+            { messageIds: acknowledged },
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+        } catch (err) {
+          console.warn('[syncPendingDeletions] Failed to ACK pending deletions', err?.message);
+        }
+      }
+    } catch (error) {
+      console.warn('[syncPendingDeletions] Error', error?.message);
+    }
+  }, [getToken]);
 
   const fetchMessages = useCallback(async () => {
     try {
@@ -114,6 +178,7 @@ export default function ChatInterface() {
       setMessages(sortedMessages);
     } catch (error) {
       console.error('Error fetching messages:', error);
+      setMessages([]);
       // If starred filter fails, try client-side filtering instead
       if (showStarredOnly && error.response?.status === 500) {
         console.log('Falling back to client-side starred filtering');
@@ -137,79 +202,6 @@ export default function ChatInterface() {
     }
   }, [getToken, showStarredOnly, searchQuery]);
 
-  const checkGoogleConnection = useCallback(async () => {
-    try {
-      const token = await getToken();
-      if (!token) {
-        console.warn('   - ❌ [checkGoogleConnection] No JWT token');
-        return false;
-      }
-
-      console.log(
-        '   - 🔍 [checkGoogleConnection] Calling GET /api/authentication/google/check...'
-      );
-      const response = await axios.get(`${API_URL}/api/authentication/google/check`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      const connected = response.data.connected;
-      const needsAuthorization = response.data.needsAuthorization;
-      console.log('     - Status: ' + (connected ? '✅ CONNECTED' : '❌ NOT CONNECTED'));
-      console.log('     - Has Refresh Token:', response.data.hasRefreshToken ? '✅' : '❌');
-      console.log('     - Needs Authorization:', needsAuthorization ? '⚠️  YES' : '❌ NO');
-
-      setGoogleConnected(connected);
-
-      // If authorization is needed (no tokens or no refresh token), redirect to auth page
-      if (needsAuthorization) {
-        console.log('   - 🔄 Redirecting to authorization page...');
-        navigate('/authorize?reauth=true');
-        return false;
-      }
-
-      return connected;
-    } catch (error) {
-      console.warn(
-        '   - ⚠️  [checkGoogleConnection] Request failed:',
-        error.response?.data?.message || error.message
-      );
-      setGoogleConnected(false);
-      return false;
-    }
-  }, [getToken, navigate]);
-
-  // Get Google OAuth token from Clerk session or Firestore
-  const getGoogleToken = useCallback(async () => {
-    try {
-      console.log('     - 🔑 [getGoogleToken] Fetching Google token...');
-
-      const clerkToken = await getToken();
-      if (!clerkToken) {
-        console.error('       - ❌ No Clerk JWT available');
-        return null;
-      }
-
-      // Get tokens from backend (which stores them in Firestore)
-      try {
-        console.log('       - 📞 Calling GET /api/authentication/google/tokens...');
-        const response = await axios.get(`${API_URL}/api/authentication/google/tokens`, {
-          headers: { Authorization: `Bearer ${clerkToken}` },
-        });
-        console.log('       - ✅ Got Google token from backend');
-        return response.data.accessToken;
-      } catch (backendError) {
-        console.error(
-          '       - ❌ Backend error:',
-          backendError.response?.data?.message || backendError.message
-        );
-        return null;
-      }
-    } catch (error) {
-      console.error('       - ❌ Error getting Google token:', error);
-      return null;
-    }
-  }, [getToken]);
-
   // useEffect hooks
 
   useEffect(() => {
@@ -218,6 +210,12 @@ export default function ChatInterface() {
     };
     fetch();
   }, [searchQuery, showStarredOnly, fetchMessages]);
+
+  // On sign-in / app load, reconcile any pending Drive deletions (offline sync)
+  useEffect(() => {
+    if (!user?.id) return;
+    syncPendingDeletions();
+  }, [user?.id, syncPendingDeletions]);
 
   // Load cached messages early (realtime mode)
   useEffect(() => {
@@ -321,6 +319,22 @@ export default function ChatInterface() {
               });
               return;
             }
+
+            // Handle Drive delete requests - delete files from user's Drive
+            if (event.type === 'drive.delete.request') {
+              const driveFileId = event.driveFileId;
+              if (!driveFileId) return;
+              console.info('[ChatInterface] drive.delete.request received:', driveFileId);
+              try {
+                await deleteFileFromDrive(driveFileId);
+                console.info('[ChatInterface] Drive file deleted:', driveFileId);
+                // ACK the deletion to the server
+                realtimeRef.current?.socket?.emit('ack-drive-delete', { driveFileId });
+              } catch (err) {
+                console.warn('[ChatInterface] Failed to delete Drive file:', err?.message);
+              }
+              return;
+            }
           },
         });
         console.info('[ChatInterface] realtime client initialized', {
@@ -346,32 +360,6 @@ export default function ChatInterface() {
       setRealtimeConnected(false);
     };
   }, [user?.id, currentDevice?.deviceId, getToken]);
-
-  // Handle OAuth query parameters (success/error from authorization callback)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const success = params.get('success');
-    const error = params.get('error');
-
-    if (success === 'true') {
-      console.log('✅ Authorization callback successful');
-      checkGoogleConnection();
-      // Clean up URL
-      window.history.replaceState({}, document.title, window.location.pathname);
-    } else if (error) {
-      console.error('❌ Authorization callback failed:', error);
-      // Don't show alert - let AuthorizationPage handle error display
-      // Clean up URL
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-  }, [checkGoogleConnection]);
-
-  useEffect(() => {
-    const check = async () => {
-      await checkGoogleConnection();
-    };
-    check();
-  }, [checkGoogleConnection]);
 
   // Initialize device on mount
   useEffect(() => {
@@ -404,8 +392,8 @@ export default function ChatInterface() {
       const device = currentDevice || initializeDevice();
       if (!currentDevice) setCurrentDevice(device);
 
-      // If file is selected, upload to Google Drive
-      let fileId = null;
+      // If file is selected, upload to Google Drive (client-side)
+      let driveFileId = null;
       let fileName = null;
       let fileSize = null;
       let mimeType = null;
@@ -415,59 +403,71 @@ export default function ChatInterface() {
 
       if (selectedFile) {
         console.log('   - 📎 File selected:', selectedFile.name);
+        setPendingUpload({
+          fileName: selectedFile.name,
+          progress: 0,
+          speed: 0,
+          status: 'uploading',
+          error: null,
+        });
         try {
-          // Get Google OAuth token from stored Firestore tokens
-          console.log('   - 🔑 Getting Google OAuth token...');
-          const googleToken = await getGoogleToken();
-          console.log('   - Token: ' + (googleToken ? '✅ Got token' : '❌ No token'));
+          console.log('   - 📤 Uploading file to Google Drive (client-side)...');
 
-          if (!googleToken) {
-            console.warn('   - ❌ No Google token available');
-            alert(
-              'Please connect Google Drive first.\n\nGo to Settings to connect your Google Drive account.'
+          const uploadResult = await uploadFileToDrive(selectedFile, (progressPayload) => {
+            if (!progressPayload) return;
+            setPendingUpload((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    progress: progressPayload.percent ?? prev.progress,
+                    speed: progressPayload.speedBps ?? prev.speed,
+                  }
+                : prev
             );
-            setIsSending(false);
-            return;
+          });
+
+          console.log('   - ✅ File uploaded successfully:', uploadResult.fileName);
+          setDriveAuthorized(true);
+
+          driveFileId = uploadResult.driveFileId;
+          fileName = uploadResult.fileName;
+          fileSize = uploadResult.size;
+          mimeType = uploadResult.mimeType;
+          webViewLink = uploadResult.webViewLink;
+          webContentLink = uploadResult.webContentLink;
+
+          // Determine file category
+          if (mimeType?.startsWith('image/')) {
+            fileCategory = 'image';
+          } else if (mimeType?.startsWith('video/')) {
+            fileCategory = 'video';
+          } else if (mimeType?.startsWith('audio/')) {
+            fileCategory = 'audio';
+          } else if (mimeType === 'application/pdf') {
+            fileCategory = 'document';
+          } else {
+            fileCategory = 'file';
           }
 
-          console.log('   - 📤 Uploading file to Google Drive...');
-          const fileFormData = new FormData();
-          fileFormData.append('file', selectedFile);
-
-          const fileResponse = await axios.post(`${API_URL}/api/files/upload`, fileFormData, {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'multipart/form-data',
-            },
-          });
-          console.log('   - ✅ File uploaded successfully:', fileResponse.data.fileName);
-
-          fileId = fileResponse.data.fileId;
-          fileName = fileResponse.data.fileName;
-          fileSize = fileResponse.data.fileSize;
-          mimeType = fileResponse.data.mimeType;
-          fileCategory = fileResponse.data.fileCategory;
-          webViewLink = fileResponse.data.webViewLink;
-          webContentLink = fileResponse.data.webContentLink;
+          setPendingUpload(null);
         } catch (uploadError) {
-          console.error(
-            '❌ File upload failed:',
-            uploadError.response?.data || uploadError.message
+          console.error('❌ File upload failed:', uploadError.message);
+          if (uploadError?.type) {
+            console.warn('GIS popup error type:', uploadError.type, uploadError);
+          }
+
+          setPendingUpload((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: 'error',
+                  error: uploadError.message || 'Upload failed',
+                }
+              : null
           );
 
-          // Check if token was revoked
-          if (uploadError.response?.data?.code === 'TOKEN_REVOKED') {
-            console.log('   - 🔄 Token revoked - clearing connection status');
-            setGoogleConnected(false);
-            alert(
-              'Google Drive authorization has expired or been revoked.\n\n' +
-                'Please reconnect your Google Drive account to upload files.'
-            );
-          } else {
-            alert(
-              `File upload failed: ${uploadError.response?.data?.message || uploadError.message}`
-            );
-          }
+          setSelectedFile(null);
+
           setIsSending(false);
           return;
         }
@@ -495,18 +495,20 @@ export default function ChatInterface() {
         );
       }
 
-      // Send file message if there's a file
-      if (fileId) {
+      // Send file message metadata if there's a file
+      if (driveFileId) {
         await axios.post(
           `${API_URL}/api/messages`,
           {
             type: 'file',
-            fileId,
+            // Store Drive file ID directly (no encryption for now)
+            fileId: driveFileId,
             fileName,
             fileSize,
             mimeType,
             fileCategory,
-            filePreviewUrl: webContentLink || webViewLink,
+            // Store direct Drive URLs
+            filePreviewUrl: getDriveContentUrl(driveFileId),
             sender: {
               deviceId: device.deviceId,
               deviceName: device.name,
@@ -546,7 +548,7 @@ export default function ChatInterface() {
       fetchMessages();
     } catch (error) {
       console.error('Error deleting message:', error);
-      alert('Failed to delete message');
+      setDeleteErrors((prev) => ({ ...prev, [messageId]: error.message || 'Delete failed' }));
     }
   };
 
@@ -583,6 +585,19 @@ export default function ChatInterface() {
   };
 
   const handleSignOut = async () => {
+    try {
+      await clearAllUserData(user?.id);
+    } catch (err) {
+      console.warn('Failed to clear Dexie on sign-out', err?.message);
+    }
+
+    try {
+      revokeToken();
+      clearStoredToken();
+    } catch (err) {
+      console.warn('Failed to clear GIS token on sign-out', err?.message);
+    }
+
     await signOut();
     navigate('/');
   };
@@ -642,100 +657,82 @@ export default function ChatInterface() {
   const handleDownloadFile = async (message) => {
     if (!message.fileId) return;
 
+    setDownloadStates((prev) => ({
+      ...prev,
+      [message.id]: { status: 'downloading', progress: 0, speed: 0, error: null },
+    }));
+
     try {
-      const token = await getToken();
-      const downloadUrl = `${API_URL}/api/files/${message.fileId}/content`;
+      const downloadUrl = getDriveContentUrl(message.fileId);
+      const res = await fetch(downloadUrl);
+      if (!res.ok || !res.body) throw new Error('Download failed');
 
-      // Fetch with auth token
-      const response = await fetch(downloadUrl, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const total = parseInt(res.headers.get('content-length') || '0', 10);
+      const reader = res.body.getReader();
+      const chunks = [];
+      let loaded = 0;
+      const startedAt = performance.now();
 
-      if (!response.ok) throw new Error('Download failed');
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        loaded += value.length;
+        const percent = total ? Math.round((loaded / total) * 100) : null;
+        const elapsedSec = Math.max((performance.now() - startedAt) / 1000, 0.001);
+        const speed = Math.round(loaded / elapsedSec);
+        setDownloadStates((prev) => ({
+          ...prev,
+          [message.id]: {
+            status: 'downloading',
+            progress: percent,
+            speed,
+            error: null,
+          },
+        }));
+      }
 
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
+      const blob = new Blob(chunks, { type: message.mimeType || 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
       link.download = message.fileName || 'download';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
+      URL.revokeObjectURL(url);
+
+      setDownloadStates((prev) => ({
+        ...prev,
+        [message.id]: { status: 'done', progress: 100, speed: 0, error: null },
+      }));
+      setTimeout(() => {
+        setDownloadStates((prev) => {
+          const next = { ...prev };
+          delete next[message.id];
+          return next;
+        });
+      }, 1500);
     } catch (error) {
       console.error('Download error:', error);
-      alert('Failed to download file');
+      setDownloadStates((prev) => ({
+        ...prev,
+        [message.id]: { status: 'error', progress: null, speed: 0, error: error.message },
+      }));
     }
 
     closeContextMenu();
   };
 
-  // Get authenticated URL with FRESH token for media (tokens expire in 60s)
-  const getAuthenticatedUrl = useCallback(
-    async (fileId) => {
-      try {
-        // Always fetch a fresh token instead of caching URLs with expired tokens
-        const token = await getToken();
-        if (!token) {
-          console.error('No token available for authenticated URL');
-          return null;
-        }
+  // Helper to get Drive URL for display (files are public via "anyone with link")
+  const getFileDisplayUrl = useCallback((fileId) => {
+    return getDriveContentUrl(fileId);
+  }, []);
 
-        const url = `${API_URL}/api/files/${fileId}/content?token=${encodeURIComponent(token)}`;
-
-        // Update cache with fresh URL
-        setAuthenticatedUrls((prev) => ({ ...prev, [fileId]: url }));
-
-        return url;
-      } catch (error) {
-        console.error('Error getting authenticated URL:', error);
-        return null;
-      }
-    },
-    [getToken] // Removed authenticatedUrls dependency to always generate fresh URLs
-  );
-
-  // Generate authenticated URLs for all file messages and their previews when messages change
-  useEffect(() => {
-    const generateUrls = async () => {
-      const fileMessages = messages.filter((m) => m.type === 'file' && m.fileId);
-      if (fileMessages.length === 0) return;
-
-      console.log('Generating authenticated URLs for', fileMessages.length, 'file messages');
-
-      // Collect all file IDs that need URLs (original files + preview files)
-      const fileIdsToFetch = new Set();
-
-      for (const msg of fileMessages) {
-        // Add main file ID
-        fileIdsToFetch.add(msg.fileId);
-
-        // Add preview file IDs if they exist
-        if (msg.thumbnailDriveFileId) fileIdsToFetch.add(msg.thumbnailDriveFileId);
-        if (msg.thumbnailSizes?.small?.id) fileIdsToFetch.add(msg.thumbnailSizes.small.id);
-        if (msg.thumbnailSizes?.medium?.id) fileIdsToFetch.add(msg.thumbnailSizes.medium.id);
-        if (msg.thumbnailSizes?.large?.id) fileIdsToFetch.add(msg.thumbnailSizes.large.id);
-        if (msg.posterDriveFileId) fileIdsToFetch.add(msg.posterDriveFileId);
-        if (msg.waveformDriveFileId) fileIdsToFetch.add(msg.waveformDriveFileId);
-        if (msg.pdfFirstPageDriveFileId) fileIdsToFetch.add(msg.pdfFirstPageDriveFileId);
-      }
-
-      // Generate URLs for all file IDs
-      for (const fileId of fileIdsToFetch) {
-        const url = await getAuthenticatedUrl(fileId);
-        if (!url) {
-          console.error('Failed to generate URL for file:', fileId);
-        }
-      }
-    };
-
-    if (messages.length > 0) {
-      generateUrls();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages]); // Only re-run when messages change, not on every token/function change
+  // Helper to get thumbnail URL for images
+  const getThumbnailUrl = useCallback((fileId, size = 200) => {
+    return getDriveThumbnailUrl(fileId, size);
+  }, []);
 
   const handleEditMessage = async () => {
     if (!editText.trim() || !editingMessage) return;
@@ -765,6 +762,33 @@ export default function ChatInterface() {
     closeContextMenu();
   };
 
+  const requestDriveAccess = async () => {
+    try {
+      setDriveAuthorized(false);
+      setShowDrivePrompt(false);
+      setAuthState({ status: 'authorizing', message: 'Requesting Google Drive access...' });
+
+      const loginHint = user?.primaryEmailAddress?.emailAddress;
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('popup_closed_or_blocked')), 25000)
+      );
+
+      await Promise.race([getAccessToken({ prompt: 'consent', login_hint: loginHint }), timeout]);
+
+      setDriveAuthorized(true);
+      setAuthState({ status: 'done', message: '' });
+      window?.focus?.();
+    } catch (err) {
+      console.warn('Drive consent failed:', err?.type || err?.message || err);
+      const humanMessage =
+        err?.message === 'popup_closed_or_blocked'
+          ? 'The Google window was closed or blocked. Please allow popups and try again.'
+          : err?.message || 'Drive access failed. Please try again.';
+      setAuthState({ status: 'error', message: humanMessage });
+      setShowDrivePrompt(true);
+    }
+  };
+
   const handleViewFile = (message) => {
     if (message.filePreviewUrl) {
       window.open(message.filePreviewUrl, '_blank');
@@ -789,6 +813,63 @@ export default function ChatInterface() {
 
   return (
     <div className="h-screen bg-gray-950 flex overflow-hidden">
+      {(authState.status === 'authorizing' || authState.status === 'error') && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-md shadow-xl text-center space-y-4">
+            {authState.status === 'authorizing' ? (
+              <>
+                <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                <p className="text-white text-lg font-semibold">Connecting Google Drive...</p>
+                <p className="text-gray-400 text-sm">
+                  Keep this window open while we complete Drive consent. The popup will close when
+                  finished.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-red-400 text-lg font-semibold">Drive access failed</p>
+                <p className="text-gray-300 text-sm whitespace-pre-wrap">{authState.message}</p>
+                <div className="flex gap-2 justify-center">
+                  <button
+                    onClick={requestDriveAccess}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    onClick={() => setAuthState({ status: 'idle', message: '' })}
+                    className="px-4 py-2 bg-gray-800 border border-gray-700 text-gray-200 rounded-lg"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      {showDrivePrompt && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-white text-lg font-semibold mb-2">Connect Google Drive</h3>
+            <p className="text-gray-300 text-sm mb-4">
+              DriveChat needs Drive access to upload and delete your files. Click below to grant
+              access. This should appear once right after sign-in.
+            </p>
+            <div className="space-y-3">
+              <button
+                onClick={requestDriveAccess}
+                className="w-full py-2 px-4 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg transition-colors"
+              >
+                Grant Drive Access
+              </button>
+              <p className="text-xs text-gray-400 text-center">
+                If a popup is blocked or auto-closed, allow popups for this site and try again.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Sidebar */}
       <div
         className={`${
@@ -853,14 +934,12 @@ export default function ChatInterface() {
                 console.log('User object:', JSON.stringify(user, null, 2));
                 console.log('External accounts:', user?.externalAccounts);
                 console.log('Session object:', JSON.stringify(session, null, 2));
-                console.log('Google connected state:', googleConnected);
+                console.log('Drive authorized state:', driveAuthorized);
 
                 const clerkGoogle = user?.externalAccounts?.find((a) => a.provider === 'google');
-                const statusMsg = googleConnected
+                const statusMsg = driveAuthorized
                   ? '✅ Google Drive is connected for file uploads'
-                  : clerkGoogle
-                    ? '⚠️ You signed in with Google, but need to authorize Drive access.\n\nClick "Connect Google Drive" button above.'
-                    : '❌ Not connected. Click "Connect Google Drive" to enable file uploads.';
+                  : "⚠️ Google Drive authorization needed.\n\nWhen you upload a file, you'll be prompted to sign in.";
 
                 alert(
                   `User: ${user?.firstName || 'Unknown'}\nEmail: ${user?.primaryEmailAddress?.emailAddress || 'N/A'}\n\n${statusMsg}\n\nCheck browser console for full details!`
@@ -964,6 +1043,39 @@ export default function ChatInterface() {
 
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {pendingUpload && (
+            <div className="flex gap-3 justify-end opacity-90">
+              <div className="flex flex-col max-w-md">
+                <div className="px-4 py-3 rounded-lg bg-blue-900/60 text-white relative">
+                  <div className="flex items-center gap-2 text-sm mb-1">
+                    <Paperclip className="w-4 h-4" />
+                    <span className="truncate font-semibold">{pendingUpload.fileName}</span>
+                  </div>
+                  <div className="w-full h-2 bg-white/10 rounded-full overflow-hidden mb-2">
+                    <div
+                      className="h-full bg-blue-400"
+                      style={{ width: `${pendingUpload.progress || 0}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-gray-200">
+                    <span>
+                      {pendingUpload.status === 'uploading'
+                        ? `${pendingUpload.progress || 0}%`
+                        : pendingUpload.status === 'error'
+                          ? 'Failed'
+                          : 'Done'}
+                    </span>
+                    <span>
+                      {pendingUpload.speed ? `${(pendingUpload.speed / 1024).toFixed(1)} KB/s` : ''}
+                    </span>
+                  </div>
+                  {pendingUpload.error && (
+                    <p className="text-xs text-red-200 mt-2">{pendingUpload.error}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
           {messages.length === 0 ? (
             <div className="flex items-center justify-center h-full text-gray-500">
               <div className="text-center">
@@ -985,6 +1097,8 @@ export default function ChatInterface() {
               const deviceType = message.sender?.deviceType || DEVICE_TYPES.GUEST;
               const deviceName = message.sender?.deviceName || 'Guest Device';
               const deviceIcon = getDeviceIcon(deviceType);
+              const downloadState = downloadStates[message.id];
+              const deleteError = deleteErrors[message.id];
 
               return (
                 <div
@@ -1072,7 +1186,11 @@ export default function ChatInterface() {
                             )
                           }
                         >
-                          <FilePreview message={message} authenticatedUrls={authenticatedUrls} />
+                          <FilePreview
+                            message={message}
+                            getFileUrl={getFileDisplayUrl}
+                            getThumbnailUrl={getThumbnailUrl}
+                          />
 
                           {/* File info */}
                           <div className="flex items-center gap-2 text-sm">
@@ -1083,6 +1201,51 @@ export default function ChatInterface() {
                             <p className="text-xs opacity-75">
                               {(message.fileSize / 1024).toFixed(2)} KB
                             </p>
+                          )}
+
+                          {downloadState && (
+                            <div className="mt-1 text-xs">
+                              {downloadState.status === 'downloading' && (
+                                <div className="space-y-1">
+                                  <div className="w-full h-1.5 bg-black/20 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-blue-400"
+                                      style={{ width: `${downloadState.progress || 0}%` }}
+                                    />
+                                  </div>
+                                  <div className="flex items-center justify-between text-[11px] text-gray-200">
+                                    <span>
+                                      {downloadState.progress
+                                        ? `${downloadState.progress}%`
+                                        : '...'}
+                                    </span>
+                                    <span>
+                                      {downloadState.speed
+                                        ? `${(downloadState.speed / 1024).toFixed(1)} KB/s`
+                                        : ''}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                              {downloadState.status === 'error' && (
+                                <div className="text-red-300 flex items-center justify-between gap-2">
+                                  <span>{downloadState.error || 'Download failed'}</span>
+                                  <button
+                                    onClick={() => handleDownloadFile(message)}
+                                    className="px-2 py-1 bg-red-500/20 rounded text-white text-[11px]"
+                                  >
+                                    Retry
+                                  </button>
+                                </div>
+                              )}
+                              {downloadState.status === 'done' && (
+                                <span className="text-green-300">Downloaded</span>
+                              )}
+                            </div>
+                          )}
+
+                          {deleteError && (
+                            <div className="text-xs text-red-300 mt-1">{deleteError}</div>
                           )}
                         </div>
                       )}
@@ -1108,6 +1271,9 @@ export default function ChatInterface() {
                             </button>
                           )}
                         </div>
+                        {deleteError && (
+                          <div className="text-xs text-red-300 mt-1">{deleteError}</div>
+                        )}
                       </div>
                     </div>
                   </div>

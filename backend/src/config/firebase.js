@@ -76,6 +76,36 @@ export const firestoreHelpers = {
     return { id: messageId };
   },
 
+  // Pending deletions (for client-side Drive cleanup)
+  async addPendingDeletion(uid, data) {
+    const pendingRef = db.collection('users').doc(uid).collection('pendingDeletions');
+    const docId = data.messageId || data.fileId || pendingRef.doc().id;
+    const payload = {
+      createdAt: new Date().toISOString(),
+      ...data,
+    };
+    await pendingRef.doc(docId).set(payload, { merge: true });
+    return { id: docId, ...payload };
+  },
+
+  async listPendingDeletions(uid) {
+    const pendingRef = db.collection('users').doc(uid).collection('pendingDeletions');
+    const snapshot = await pendingRef.orderBy('createdAt', 'asc').limit(500).get();
+    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  },
+
+  async removePendingDeletions(uid, messageIds = []) {
+    if (!messageIds.length) return 0;
+    const batch = db.batch();
+    const pendingRef = db.collection('users').doc(uid).collection('pendingDeletions');
+    messageIds.forEach((mid) => {
+      const ref = pendingRef.doc(mid);
+      batch.delete(ref);
+    });
+    await batch.commit();
+    return messageIds.length;
+  },
+
   // Get expired messages
   async getExpiredMessages() {
     const now = new Date().toISOString();

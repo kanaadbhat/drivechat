@@ -1,7 +1,6 @@
 import { firestoreHelpers } from '../config/firebase.js';
-import { getOAuthClientForUser } from '../utils/googleAuth.js';
-import { google } from 'googleapis';
 import logger from '../utils/logger.js';
+import { publishUserEvent } from '../realtime/realtimeHub.js';
 
 /**
  * Cleanup expired messages and their associated files
@@ -63,28 +62,32 @@ export const cleanupExpiredMessages = async (options = {}) => {
 
     for (const msg of expiredMessages) {
       try {
-        // If it's a file message, delete from Google Drive first (folder-aware)
+        // Drive deletion is now client-side; request via realtime
         if (msg.type === 'file' && msg.fileId) {
           try {
-            const oauth2Client = await getOAuthClientForUser(msg.uid);
-            const drive = google.drive({ version: 'v3', auth: oauth2Client });
+            // Record pending deletion so offline clients can reconcile on next load
+            await firestoreHelpers.addPendingDeletion(msg.uid, {
+              messageId: msg.messageId,
+              fileId: msg.fileId,
+              fileFolderId: msg.fileFolderId || null,
+              mimeType: msg.mimeType,
+              fileName: msg.fileName,
+              reason: 'expired',
+            });
 
-            if (msg.fileFolderId) {
-              logger.info(`[cleanupService] Deleting folder ${msg.fileFolderId} from Drive...`);
-              await drive.files.delete({ fileId: msg.fileFolderId });
-              driveFilesDeleted++;
-              logger.success(
-                `[cleanupService] ✅ Deleted folder: ${msg.fileFolderId} (${msg.fileName})`
-              );
-            } else {
-              logger.info(`[cleanupService] Deleting file ${msg.fileId} from Drive...`);
-              await drive.files.delete({ fileId: msg.fileId });
-              driveFilesDeleted++;
-              logger.success(`[cleanupService] ✅ Deleted file: ${msg.fileId}`);
-            }
-          } catch (driveError) {
-            logger.warn(`[cleanupService] ⚠️ Failed to delete from Drive: ${driveError.message}`);
-            // Continue with message deletion even if Drive deletion fails
+            await publishUserEvent(msg.uid, {
+              type: 'drive.delete.request',
+              messageId: msg.messageId,
+              payload: {
+                fileId: msg.fileId,
+                fileFolderId: msg.fileFolderId || null,
+                mimeType: msg.mimeType,
+                fileName: msg.fileName,
+              },
+            });
+            driveFilesDeleted++;
+          } catch {
+            // non-fatal
           }
         }
 

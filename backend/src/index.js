@@ -10,11 +10,9 @@ dotenv.config();
 
 // Import routes
 import messageRoutes from './routes/messages.js';
-import fileRoutes from './routes/files.js';
 import userRoutes from './routes/users.js';
 import adminRoutes from './routes/admin.js';
-import authenticationRoutes from './routes/authentication.js';
-import authorizationRoutes from './routes/authorization.js';
+// NOTE: fileRoutes, authorizationRoutes, and authenticationRoutes removed - Drive handled client-side
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler.js';
@@ -50,11 +48,9 @@ app.get('/health', (req, res) => {
 
 // API Routes
 app.use('/api/messages', messageRoutes);
-app.use('/api/files', fileRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/authentication', authenticationRoutes);
-app.use('/api/authorization', authorizationRoutes);
+// NOTE: /api/authentication, /api/files and /api/authorization removed - Drive handled client-side
 
 // 404 handler
 app.use((req, res) => {

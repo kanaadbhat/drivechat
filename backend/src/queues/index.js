@@ -1,23 +1,15 @@
 import logger from '../utils/logger.js';
 
-// Import all queue systems
-import { previewQueue, previewWorker } from './previewQueue.js';
+// Import cleanup queue only (Drive/file queues are retired - client handles Drive)
 import { cleanupQueue, cleanupWorker, setupPeriodicCleanup } from './cleanupQueue.js';
-import { fileQueue, fileWorker } from './fileQueue.js';
 
-// Export all queues and workers
-export { previewQueue, previewWorker };
+// Export active queues and functions
 export { cleanupQueue, cleanupWorker };
-export { fileQueue, fileWorker };
-
-// Export queue functions
-export { queuePreviewGeneration, getPreviewJobStatus } from './previewQueue.js';
 export {
   scheduleMessageDeletion,
   cancelMessageDeletion,
   triggerImmediateCleanup,
 } from './cleanupQueue.js';
-export { queueFileUpload, queueFileDelete, queueBatchFileDelete } from './fileQueue.js';
 
 /**
  * Initialize all queues and workers
@@ -27,9 +19,7 @@ export async function initializeQueues() {
     logger.info('🚀 Initializing queue system...');
 
     // All queue workers are automatically started when imported
-    logger.info('✅ Preview queue worker initialized');
     logger.info('✅ Cleanup queue worker initialized');
-    logger.info('✅ File queue worker initialized');
 
     // Setup periodic cleanup tasks
     if (String(process.env.SKIP_PERIODIC_CLEANUP || '').toLowerCase() === 'true') {
@@ -38,7 +28,7 @@ export async function initializeQueues() {
       await setupPeriodicCleanup();
     }
 
-    logger.info('Active queues: preview-generation, cleanup, file-operations');
+    logger.info('Active queues: cleanup');
     logger.success('✅ Queue system initialized successfully');
   } catch (error) {
     logger.error('❌ Failed to initialize queue system:', error);
@@ -53,15 +43,9 @@ export async function shutdownQueues() {
   logger.info('Shutting down queue system...');
   const shutdownPromises = [];
 
-  // Close all workers
-  if (previewWorker) shutdownPromises.push(previewWorker.close());
+  // Only cleanup queue remains - Drive/file queues retired
   if (cleanupWorker) shutdownPromises.push(cleanupWorker.close());
-  if (fileWorker) shutdownPromises.push(fileWorker.close());
-
-  // Close all queues
-  if (previewQueue) shutdownPromises.push(previewQueue.close());
   if (cleanupQueue) shutdownPromises.push(cleanupQueue.close());
-  if (fileQueue) shutdownPromises.push(fileQueue.close());
 
   await Promise.all(shutdownPromises);
   logger.success('✅ Queue system shutdown complete');

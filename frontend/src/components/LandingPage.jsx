@@ -1,11 +1,13 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import { MessageSquare, Star, Upload, Shield, Zap, Cloud } from 'lucide-react';
 
 export default function LandingPage() {
   const navigate = useNavigate();
-  const { isSignedIn } = useAuth();
+  const { isSignedIn, signOut } = useAuth();
   const { user } = useUser();
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   const features = [
     {
@@ -56,13 +58,45 @@ export default function LandingPage() {
               <span className="text-2xl font-bold">DriveChat</span>
             </div>
             {isSignedIn ? (
-              <button onClick={() => navigate('/chat')} className="flex items-center gap-2">
-                <img
-                  src={user?.imageUrl || 'https://via.placeholder.com/40'}
-                  alt={user?.fullName || 'User'}
-                  className="w-10 h-10 rounded-full object-cover border-2 border-blue-500 hover:border-purple-500 transition-colors cursor-pointer"
-                />
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => navigate('/chat')}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setShowProfileMenu((prev) => !prev);
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <img
+                    src={user?.imageUrl || 'https://via.placeholder.com/40'}
+                    alt={user?.fullName || 'User'}
+                    className="w-10 h-10 rounded-full object-cover border-2 border-blue-500 hover:border-purple-500 transition-colors cursor-pointer"
+                  />
+                </button>
+                {showProfileMenu && (
+                  <div className="absolute right-0 mt-2 w-40 bg-gray-900 border border-gray-800 rounded-lg shadow-xl z-10">
+                    <button
+                      onClick={() => {
+                        setShowProfileMenu(false);
+                        navigate('/chat');
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-gray-200 hover:bg-gray-800"
+                    >
+                      Go to Chat
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setShowProfileMenu(false);
+                        await signOut();
+                        navigate('/');
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-800"
+                    >
+                      Sign Out
+                    </button>
+                  </div>
+                )}
+              </div>
             ) : (
               <button
                 onClick={() => navigate('/signin')}

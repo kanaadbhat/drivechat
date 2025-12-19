@@ -45,3 +45,15 @@ export async function clearMessages(userId) {
   await db.messages.where('userId').equals(userId).delete();
   console.info('[dexie] clearMessages', { userId });
 }
+
+export async function clearMeta(userId) {
+  if (!userId) return;
+  await db.meta.where('userId').equals(userId).delete();
+  console.info('[dexie] clearMeta', { userId });
+}
+
+export async function clearAllUserData(userId) {
+  if (!userId) return;
+  await Promise.all([clearMessages(userId), clearMeta(userId)]);
+  console.info('[dexie] clearAllUserData', { userId });
+}

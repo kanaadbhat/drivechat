@@ -19,15 +19,59 @@ import axios from 'axios';
 import dayjs from 'dayjs';
 import FilePreview from './FilePreview';
 import { getDriveContentUrl, getDriveThumbnailUrl } from '../utils/gisClient';
+import Skeleton from './ui/Skeleton';
 import { loadMessages, upsertMessage } from '../db/dexie';
 import { initializeDevice } from '../utils/deviceManager';
 import { createRealtimeClient } from '../utils/realtimeClient';
+
+const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)/gi;
+
+const renderTextWithLinks = (text = '') => {
+  const parts = text.split(urlRegex);
+  return parts.map((part, idx) => {
+    if (!part) return null;
+    const isUrl = urlRegex.test(part);
+    urlRegex.lastIndex = 0;
+    if (isUrl) {
+      const href = part.startsWith('http') ? part : `https://${part}`;
+      return (
+        <a
+          key={`link-${idx}`}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline text-blue-200 hover:text-white break-words"
+        >
+          {part}
+        </a>
+      );
+    }
+    return (
+      <span key={`text-${idx}`} className="break-words">
+        {part}
+      </span>
+    );
+  });
+};
+
+const containsUrl = (text = '') => {
+  if (!text) return false;
+  urlRegex.lastIndex = 0;
+  return urlRegex.test(text);
+};
+
+const extractFirstUrl = (text = '') => {
+  const regex = /(https?:\/\/[^^\s]+)|(www\.[^\s]+)/i;
+  const match = text?.match(regex);
+  return match ? match[0] : null;
+};
 
 const API_URL =
   import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
 const fileTypes = [
   { id: 'all', label: 'All Files', icon: File },
+  { id: 'links', label: 'Links', icon: ExternalLink },
   {
     id: 'images',
     label: 'Images',
@@ -231,6 +275,15 @@ export default function StarredMessages() {
     return filename?.split('.').pop()?.toLowerCase() || '';
   };
 
+  const getHostname = (url = '') => {
+    try {
+      const u = new URL(url.startsWith('http') ? url : `https://${url}`);
+      return u.hostname.replace(/^www\./, '');
+    } catch (e) {
+      return url;
+    }
+  };
+
   const getFileIcon = (filename) => {
     if (!filename) return <File className="w-5 h-5" />;
     const ext = getFileExtension(filename);
@@ -252,6 +305,10 @@ export default function StarredMessages() {
 
   const filteredMessages = starredMessages.filter((message) => {
     if (selectedType === 'all') return true;
+    if (selectedType === 'links') {
+      // include explicit link messages and text messages that contain a URL
+      return message.type === 'link' || (message.type === 'text' && containsUrl(message.text));
+    }
     if (message.type !== 'file' || !message.fileName) return false;
 
     const ext = getFileExtension(message.fileName);
@@ -277,7 +334,6 @@ export default function StarredMessages() {
 
   const renderCard = (message) => (
     <div
-      key={message.id}
       className="bg-gray-900 border border-gray-800 rounded-lg p-3 hover:border-gray-700 transition-colors group shadow-sm"
       onDoubleClick={() =>
         message.fileId &&
@@ -296,8 +352,53 @@ export default function StarredMessages() {
       </div>
 
       {message.type === 'file' && renderFilePreview(message)}
+      {(message.type === 'link' || (message.type === 'text' && containsUrl(message.text))) &&
+        (message.linkUrl || extractFirstUrl(message.text)) &&
+        (() => {
+          const link = message.linkUrl || extractFirstUrl(message.text);
+          const hostname = getHostname(link || '');
+          return (
+            <a
+              href={link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block rounded-lg overflow-hidden border border-gray-800 hover:border-gray-700 transition-colors bg-black/20"
+            >
+              <div className="flex items-stretch">
+                {message.linkImage || hostname ? (
+                  <img
+                    src={
+                      message.linkImage ||
+                      `https://www.google.com/s2/favicons?sz=128&domain=${hostname}`
+                    }
+                    alt={message.linkTitle || link}
+                    className="w-36 h-24 object-cover flex-shrink-0"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="w-36 h-24 flex-shrink-0 bg-gray-800 flex items-center justify-center text-gray-400">
+                    <ExternalLink className="w-5 h-5" />
+                  </div>
+                )}
+                <div className="p-3 space-y-1 min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-white line-clamp-2 break-words">
+                    {message.linkTitle || hostname}
+                  </p>
+                  {message.linkDescription && (
+                    <p className="text-xs text-gray-300 line-clamp-2 leading-snug">
+                      {message.linkDescription}
+                    </p>
+                  )}
+                  <p className="text-xs text-blue-200 underline break-all leading-snug">{link}</p>
+                </div>
+              </div>
+            </a>
+          );
+        })()}
       {message.type === 'text' && message.text && (
-        <p className="text-gray-300 text-sm mb-2 line-clamp-3 leading-snug">{message.text}</p>
+        <p className="text-gray-300 text-sm mb-2 line-clamp-3 leading-snug">
+          {renderTextWithLinks(message.text)}
+        </p>
       )}
 
       {message.type === 'file' && message.fileName && (
@@ -348,6 +449,20 @@ export default function StarredMessages() {
         <div className="w-16 h-16 bg-gray-900 border border-gray-800 rounded-lg flex items-center justify-center overflow-hidden">
           {message.type === 'file' ? (
             renderFilePreview(message)
+          ) : message.type === 'link' || (message.type === 'text' && containsUrl(message.text)) ? (
+            (() => {
+              const linkForRow = message.linkUrl || extractFirstUrl(message.text);
+              return (
+                <a
+                  href={linkForRow}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-blue-300 px-2 text-center underline truncate"
+                >
+                  {linkForRow}
+                </a>
+              );
+            })()
           ) : (
             <div className="text-xs text-gray-400 px-2 text-center">Text</div>
           )}
@@ -362,19 +477,31 @@ export default function StarredMessages() {
         </div>
       </div>
       <div className="col-span-2 text-gray-300 truncate">
-        {message.type === 'file' ? getFileExtension(message.fileName) || 'file' : 'text'}
+        {message.type === 'file'
+          ? getFileExtension(message.fileName) || 'file'
+          : message.type === 'link'
+            ? 'link'
+            : 'text'}
       </div>
       <div className="col-span-2 text-gray-300 truncate">
         {message.type === 'file'
           ? message.fileSize
             ? formatBytes(message.fileSize)
             : 'Unknown'
-          : '—'}
+          : message.type === 'link' || (message.type === 'text' && containsUrl(message.text))
+            ? getHostname(message.linkUrl || extractFirstUrl(message.text))
+            : '—'}
       </div>
       <div className="col-span-3 flex justify-end gap-2 text-sm">
-        {message.type === 'file' && (
+        {(message.type === 'file' ||
+          message.type === 'link' ||
+          (message.type === 'text' && containsUrl(message.text))) && (
           <a
-            href={message.filePreviewUrl || getDriveContentUrl(message.fileId)}
+            href={
+              message.type === 'file'
+                ? message.filePreviewUrl || getDriveContentUrl(message.fileId)
+                : message.linkUrl || extractFirstUrl(message.text)
+            }
             target="_blank"
             rel="noopener noreferrer"
             className="px-2 py-1 rounded bg-gray-800 text-gray-200 hover:bg-gray-700 transition-colors"
@@ -464,8 +591,30 @@ export default function StarredMessages() {
       {/* Content */}
       <div className="container mx-auto px-4 py-6">
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="text-gray-400">Loading...</div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {[...Array(6)].map((_, idx) => (
+              <div
+                key={`starred-skel-${idx}`}
+                className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3 animate-fade-in"
+              >
+                <div className="flex items-center justify-between">
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-6 w-6 rounded" />
+                </div>
+                <Skeleton className="h-32 w-full rounded-lg" />
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-5/6" />
+                  <Skeleton className="h-3 w-2/3" />
+                </div>
+                <div className="flex items-center justify-between pt-2 border-t border-gray-800">
+                  <Skeleton className="h-3 w-16" />
+                  <div className="flex gap-2">
+                    <Skeleton className="h-8 w-16 rounded" />
+                    <Skeleton className="h-8 w-12 rounded" />
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         ) : filteredMessages.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-gray-500">
@@ -475,14 +624,21 @@ export default function StarredMessages() {
           </div>
         ) : viewMode === 'grid' ? (
           <div
-            className="grid gap-3"
+            className="masonry w-full"
             style={{
-              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-              gridAutoFlow: 'dense',
-              alignItems: 'start',
+              columnWidth: 320,
+              columnGap: 16,
             }}
           >
-            {sortedMessages.map((message) => renderCard(message))}
+            {sortedMessages.map((message) => (
+              <div
+                key={message.id}
+                className="break-inside-avoid-column inline-block w-full mb-4"
+                style={{ width: '100%' }}
+              >
+                {renderCard(message)}
+              </div>
+            ))}
           </div>
         ) : (
           <div className="space-y-2">

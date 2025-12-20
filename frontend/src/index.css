@@ -55,3 +55,7 @@ a,
 .clickable {
   cursor: pointer;
 }
+.break-inside-avoid-column {
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+}

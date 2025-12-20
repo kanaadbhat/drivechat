@@ -1,8 +1,47 @@
 import { useMemo } from 'react';
 import dayjs from 'dayjs';
-import { Star, StarOff, Trash2 } from 'lucide-react';
+import { Star, StarOff, Trash2, ExternalLink } from 'lucide-react';
 import FilePreview from '../FilePreview';
 import { DEVICE_TYPES, getDeviceIcon } from '../../utils/deviceManager';
+
+const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)/gi;
+
+const renderTextWithLinks = (text = '') => {
+  const parts = text.split(urlRegex);
+  return parts.map((part, idx) => {
+    if (!part) return null;
+    const isUrl = urlRegex.test(part);
+    urlRegex.lastIndex = 0;
+    if (isUrl) {
+      const href = part.startsWith('http') ? part : `https://${part}`;
+      return (
+        <a
+          key={`link-${idx}`}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline text-blue-200 hover:text-white break-words"
+        >
+          {part}
+        </a>
+      );
+    }
+    return (
+      <span key={`text-${idx}`} className="break-words">
+        {part}
+      </span>
+    );
+  });
+};
+
+const getHostname = (url = '') => {
+  try {
+    const u = new URL(url.startsWith('http') ? url : `https://${url}`);
+    return u.hostname.replace(/^www\./, '');
+  } catch (e) {
+    return url;
+  }
+};
 
 export default function MessageItem({
   message,
@@ -88,12 +127,62 @@ export default function MessageItem({
                   </div>
                 </div>
               ) : (
-                <p className="wrap-break-word">
-                  {message.text}
+                <p className="wrap-break-word space-y-1">
+                  <span className="leading-relaxed break-words">
+                    {renderTextWithLinks(message.text)}
+                  </span>
                   {message.edited && <span className="text-xs opacity-60 ml-2">(edited)</span>}
                 </p>
               )}
             </>
+          )}
+
+          {message.type === 'link' && message.linkUrl && (
+            <div className="space-y-2">
+              {message.text && (
+                <p className="wrap-break-word space-y-1 text-sm">
+                  <span className="leading-relaxed break-words">
+                    {renderTextWithLinks(message.text)}
+                  </span>
+                  {message.edited && <span className="text-xs opacity-60 ml-2">(edited)</span>}
+                </p>
+              )}
+              <a
+                href={message.linkUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block rounded-lg overflow-hidden border border-gray-700 bg-black/20 hover:border-gray-500 transition-colors"
+              >
+                <div className="flex items-stretch">
+                  {message.linkImage || getHostname(message.linkUrl) ? (
+                    <img
+                      src={
+                        message.linkImage ||
+                        `https://www.google.com/s2/favicons?sz=128&domain=${getHostname(message.linkUrl)}`
+                      }
+                      alt={message.linkTitle || message.linkUrl}
+                      className="w-28 h-28 object-cover flex-shrink-0"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="w-28 h-28 flex-shrink-0 bg-gray-800 flex items-center justify-center text-gray-400">
+                      <ExternalLink className="w-5 h-5" />
+                    </div>
+                  )}
+                  <div className="p-3 space-y-1 min-w-0">
+                    <p className="text-sm font-semibold text-white truncate">
+                      {message.linkTitle || getHostname(message.linkUrl)}
+                    </p>
+                    {message.linkDescription && (
+                      <p className="text-xs text-gray-300 line-clamp-2 leading-snug">
+                        {message.linkDescription}
+                      </p>
+                    )}
+                    <p className="text-xs text-blue-200 truncate underline">{message.linkUrl}</p>
+                  </div>
+                </div>
+              </a>
+            </div>
           )}
 
           {message.type === 'file' && message.fileName && (

@@ -15,6 +15,9 @@ let tokenExpiresAt = 0;
 let tokenPromiseResolve = null;
 let tokenPromiseReject = null;
 
+// Eagerly load any stored token at module load so hasValidToken works before initGisClient runs
+loadStoredToken();
+
 function loadStoredToken() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -114,6 +117,11 @@ export function hasValidToken() {
  */
 export async function getAccessToken(options = {}) {
   const { prompt = false, login_hint } = options;
+
+  // Ensure we hydrate from storage before deciding if we need to prompt
+  if (!currentAccessToken) {
+    loadStoredToken();
+  }
 
   if (prompt !== true && prompt !== 'consent' && hasValidToken()) {
     return currentAccessToken;

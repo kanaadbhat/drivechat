@@ -27,6 +27,7 @@ import {
   getDeviceIcon,
   DEVICE_TYPES,
 } from '../utils/deviceManager';
+import Skeleton from './ui/Skeleton';
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
@@ -46,6 +47,8 @@ export default function SettingsPage() {
   const [newDeviceName, setNewDeviceName] = useState('');
   const [newDeviceType, setNewDeviceType] = useState(DEVICE_TYPES.GUEST);
   const [editingDevice, setEditingDevice] = useState(null);
+  const hasRegisteredDevice = Boolean(currentDevice?.isRegistered || devices.length > 0);
+  const showOnlyCurrentDeviceMessage = currentDevice?.isRegistered && devices.length === 0;
 
   const formatBytes = (bytes = 0, decimals = 1) => {
     if (!bytes) return '0 B';
@@ -380,8 +383,48 @@ export default function SettingsPage() {
       {/* Content */}
       <div className="container mx-auto px-4 py-6 max-w-4xl">
         {loading ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="text-gray-400">Loading...</div>
+          <div className="space-y-6 animate-fade-in">
+            <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
+              <Skeleton className="h-5 w-40" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <Skeleton className="h-16" />
+                <Skeleton className="h-16" />
+              </div>
+            </div>
+
+            <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <Skeleton className="h-10 w-10 rounded-full" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-3 w-48" />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <Skeleton className="h-14" />
+                <Skeleton className="h-14" />
+                <Skeleton className="h-14" />
+              </div>
+            </div>
+
+            <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-10 w-10 rounded-full" />
+                  <div className="space-y-2">
+                    <Skeleton className="h-4 w-32" />
+                    <Skeleton className="h-3 w-24" />
+                  </div>
+                </div>
+                <Skeleton className="h-9 w-28 rounded-lg" />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Skeleton className="h-20" />
+                <Skeleton className="h-20" />
+                <Skeleton className="h-20" />
+                <Skeleton className="h-20" />
+              </div>
+            </div>
           </div>
         ) : (
           <div className="space-y-6">
@@ -496,14 +539,23 @@ export default function SettingsPage() {
                   <Smartphone className="w-5 h-5 text-purple-400" />
                   <h2 className="text-xl font-semibold text-white">Devices</h2>
                 </div>
-                <button
-                  onClick={handleAddCurrentDevice}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 rounded-lg transition-colors text-sm font-medium"
-                >
-                  <Plus className="w-4 h-4" />
-                  Add This Device
-                </button>
+                {!currentDevice?.isRegistered && (
+                  <button
+                    onClick={handleAddCurrentDevice}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 rounded-lg transition-colors text-sm font-medium"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add This Device
+                  </button>
+                )}
               </div>
+
+              {showOnlyCurrentDeviceMessage && (
+                <p className="text-center text-sm text-gray-400 mb-4">
+                  Only your current device is registered right now. Refresh the page if it doesn't
+                  appear below this line.
+                </p>
+              )}
 
               {/* Current Device Info */}
               {currentDevice && (
@@ -579,11 +631,11 @@ export default function SettingsPage() {
               )}
 
               {/* Registered Devices List */}
-              {devices.length === 0 ? (
+              {!hasRegisteredDevice ? (
                 <p className="text-gray-400 text-center py-4">
                   No devices registered. Add this device to get started!
                 </p>
-              ) : (
+              ) : devices.length === 0 ? null : (
                 <div className="space-y-3">
                   {devices.map((device) => {
                     const isCurrentDevice = device.deviceId === currentDevice?.deviceId;

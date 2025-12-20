@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Play, Pause, FileText, Download } from 'lucide-react';
 import { downloadFileFromDrive } from '../utils/gisClient';
 
@@ -26,55 +26,104 @@ function PreviewSkeleton({ className = '' }) {
   );
 }
 
-// Error state component
-function PreviewError({ fileName, error }) {
-  return (
-    <div className="px-4 py-3 bg-red-900/20 border border-red-700/50 rounded">
-      <p className="text-sm text-red-400 mb-1">Preview generation failed</p>
-      {error && <p className="text-xs text-red-500">{error}</p>}
-    </div>
-  );
-}
-
 // Image preview - uses Drive direct URLs (files are public via "anyone with link")
-export function ImagePreview({ message, getFileUrl, getThumbnailUrl, variant = 'default' }) {
+export function ImagePreview({
+  message,
+  getFileUrl,
+  getThumbnailUrl,
+  variant = 'default',
+  onFallback,
+}) {
   const { fileId, fileName } = message;
 
   // Use Drive thumbnail URL for preview (faster loading)
   const thumbnailUrl = getThumbnailUrl?.(fileId, 400) || getFileUrl?.(fileId);
   const fullUrl = getFileUrl?.(fileId);
+  const [downloadAttempted, setDownloadAttempted] = useState(false);
+  const [blobUrl, setBlobUrl] = useState('');
+  const blobRef = useRef('');
 
-  if (!thumbnailUrl) {
-    return <PreviewSkeleton className="w-32 h-32" />;
-  }
+  const releaseBlob = useCallback(() => {
+    if (blobRef.current) {
+      URL.revokeObjectURL(blobRef.current);
+      blobRef.current = '';
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => releaseBlob();
+  }, [releaseBlob]);
+
+  useEffect(() => {
+    releaseBlob();
+    // Defer state updates to avoid synchronous setState inside effect
+    const t = setTimeout(() => {
+      setBlobUrl('');
+      setDownloadAttempted(false);
+    }, 0);
+    return () => clearTimeout(t);
+  }, [fileId, releaseBlob]);
+
+  const setBlob = (url) => {
+    releaseBlob();
+    blobRef.current = url;
+    setBlobUrl(url);
+  };
+
+  const downloadFallback = useCallback(async () => {
+    setDownloadAttempted(true);
+    try {
+      const blob = await downloadFileFromDrive(fileId, message.mimeType);
+      const url = URL.createObjectURL(blob);
+      setBlob(url);
+    } catch (err) {
+      console.warn('[ImagePreview] fallback download failed', err?.message);
+      onFallback?.();
+    }
+  }, [fileId, message.mimeType, onFallback]);
+
+  useEffect(() => {
+    if (!thumbnailUrl && !fullUrl && !downloadAttempted) {
+      // Defer fallback invocation to avoid synchronous setState in effect
+      const t = setTimeout(() => {
+        downloadFallback();
+      }, 0);
+      return () => clearTimeout(t);
+    }
+  }, [thumbnailUrl, fullUrl, downloadAttempted, downloadFallback]);
 
   const sizeClass = variant === 'compact' ? 'max-h-48' : 'max-h-64';
 
+  const src = blobUrl || thumbnailUrl || fullUrl;
+
+  const handleError = () => {
+    if (!downloadAttempted) {
+      downloadFallback();
+    } else {
+      onFallback?.();
+    }
+  };
+
+  if (!src) {
+    return <PreviewSkeleton className={`w-full ${sizeClass}`} />;
+  }
+
   return (
     <img
-      src={thumbnailUrl}
+      src={src}
       alt={fileName}
       className={`max-w-full ${sizeClass} rounded cursor-pointer object-cover`}
       onClick={() => window.open(`https://drive.google.com/file/d/${fileId}/view`, '_blank')}
-      onError={(e) => {
-        console.error('Image load error for:', fileId);
-        // Fallback to full URL if thumbnail fails
-        if (fullUrl && e.target.src !== fullUrl) {
-          e.target.src = fullUrl;
-        } else {
-          e.target.style.display = 'none';
-        }
-      }}
+      onError={handleError}
       loading="lazy"
     />
   );
 }
 
 // Video preview - embeds Drive player
-export function VideoPreview({ message, getFileUrl, variant = 'default' }) {
+export function VideoPreview({ message, getFileUrl, variant = 'default', onFallback }) {
   const { fileId, fileName, durationMs, mimeType } = message;
   const [previewUrl, setPreviewUrl] = useState('');
-  const [error, setError] = useState('');
 
   useEffect(() => {
     let revokedUrl = '';
@@ -88,7 +137,7 @@ export function VideoPreview({ message, getFileUrl, variant = 'default' }) {
       } catch (err) {
         if (cancelled) return;
         console.warn('Video preview failed', err?.message);
-        setError('Preview unavailable. Open in Drive instead.');
+        onFallback?.();
       }
     };
     load();
@@ -108,7 +157,7 @@ export function VideoPreview({ message, getFileUrl, variant = 'default' }) {
         <div
           className={`${sizeClass} rounded bg-gray-800 flex items-center justify-center text-gray-400 text-xs`}
         >
-          {error || 'Loading preview...'}
+          Loading preview...
         </div>
       )}
       {durationMs && (
@@ -129,18 +178,15 @@ export function VideoPreview({ message, getFileUrl, variant = 'default' }) {
 }
 
 // Audio preview - simple audio player
-export function AudioPreview({ message, getFileUrl, variant = 'default' }) {
+export function AudioPreview({ message, getFileUrl, variant = 'default', onFallback }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const { fileId, fileName, durationMs } = message;
 
   const audioUrl = getFileUrl?.(fileId);
 
   if (!audioUrl) {
-    return (
-      <div className="flex items-center justify-center w-64 h-12 bg-gray-700 rounded">
-        <span className="text-gray-400 text-xs">Loading audio...</span>
-      </div>
-    );
+    onFallback?.();
+    return null;
   }
 
   const pad = variant === 'compact' ? 'p-2' : 'p-3';
@@ -184,10 +230,9 @@ export function AudioPreview({ message, getFileUrl, variant = 'default' }) {
 }
 
 // PDF preview - uses Drive embed
-export function PDFPreview({ message, variant = 'default' }) {
+export function PDFPreview({ message, variant = 'default', onFallback }) {
   const { fileId, fileName, mimeType } = message;
   const [previewUrl, setPreviewUrl] = useState('');
-  const [error, setError] = useState('');
 
   useEffect(() => {
     let revokedUrl = '';
@@ -201,7 +246,7 @@ export function PDFPreview({ message, variant = 'default' }) {
       } catch (err) {
         if (cancelled) return;
         console.warn('PDF preview failed', err?.message);
-        setError('Preview unavailable. Open in Drive instead.');
+        onFallback?.();
       }
     };
     load();
@@ -221,7 +266,7 @@ export function PDFPreview({ message, variant = 'default' }) {
         <div
           className={`${sizeClass} rounded mb-3 bg-gray-800 flex items-center justify-center text-gray-400 text-sm`}
         >
-          {error || 'Loading preview...'}
+          Loading preview...
         </div>
       )}
       <div className="flex items-center gap-2">
@@ -241,30 +286,7 @@ export function PDFPreview({ message, variant = 'default' }) {
 }
 
 // Office document preview - uses Drive embed
-export function OfficePreview({ message }) {
-  const { fileId, fileName } = message;
-  return (
-    <div className="px-4 py-3 bg-gray-700/50 rounded">
-      <div className="w-64 h-80 rounded mb-3 bg-gray-800 flex items-center justify-center">
-        <p className="text-sm text-gray-400">
-          Preview unavailable in-browser due to browser security.
-        </p>
-      </div>
-      <div className="flex items-center gap-2">
-        <FileText className="w-5 h-5 text-blue-400" />
-        <div>
-          <p className="text-sm text-gray-300 font-medium">{getOfficeFileType(fileName)}</p>
-          <button
-            onClick={() => window.open(`https://drive.google.com/file/d/${fileId}/view`, '_blank')}
-            className="text-xs text-blue-400 hover:text-blue-300 underline"
-          >
-            Open in Google Drive
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// Office previews defer to generic card to avoid large placeholders
 
 // Generic file preview for unsupported types
 export function GenericFilePreview({ message, variant = 'default' }) {
@@ -289,24 +311,6 @@ export function GenericFilePreview({ message, variant = 'default' }) {
   );
 }
 
-// Helper to determine Office file type
-function getOfficeFileType(fileName) {
-  const ext = fileName?.split('.').pop()?.toLowerCase();
-  switch (ext) {
-    case 'docx':
-    case 'doc':
-      return 'Word Document';
-    case 'xlsx':
-    case 'xls':
-      return 'Excel Spreadsheet';
-    case 'pptx':
-    case 'ppt':
-      return 'PowerPoint Presentation';
-    default:
-      return 'Office Document';
-  }
-}
-
 /**
  * Main FilePreview component that routes to appropriate preview type
  *
@@ -317,6 +321,13 @@ function getOfficeFileType(fileName) {
  */
 export default function FilePreview({ message, getFileUrl, getThumbnailUrl, variant = 'default' }) {
   const { mimeType, fileName } = message;
+  const [useFallback, setUseFallback] = useState(false);
+
+  const fallback = () => setUseFallback(true);
+
+  if (useFallback) {
+    return <GenericFilePreview message={message} variant={variant} />;
+  }
 
   // Determine file category and render appropriate preview
   if (mimeType?.startsWith('image/')) {
@@ -326,20 +337,35 @@ export default function FilePreview({ message, getFileUrl, getThumbnailUrl, vari
         getFileUrl={getFileUrl}
         getThumbnailUrl={getThumbnailUrl}
         variant={variant}
+        onFallback={fallback}
       />
     );
   }
 
   if (mimeType?.startsWith('video/')) {
-    return <VideoPreview message={message} getFileUrl={getFileUrl} variant={variant} />;
+    return (
+      <VideoPreview
+        message={message}
+        getFileUrl={getFileUrl}
+        variant={variant}
+        onFallback={fallback}
+      />
+    );
   }
 
   if (mimeType?.startsWith('audio/')) {
-    return <AudioPreview message={message} getFileUrl={getFileUrl} variant={variant} />;
+    return (
+      <AudioPreview
+        message={message}
+        getFileUrl={getFileUrl}
+        variant={variant}
+        onFallback={fallback}
+      />
+    );
   }
 
   if (mimeType === 'application/pdf') {
-    return <PDFPreview message={message} variant={variant} />;
+    return <PDFPreview message={message} variant={variant} onFallback={fallback} />;
   }
 
   // Office documents
@@ -349,7 +375,7 @@ export default function FilePreview({ message, getFileUrl, getThumbnailUrl, vari
     mimeType?.includes('ms-excel') ||
     mimeType?.includes('ms-powerpoint')
   ) {
-    return <OfficePreview message={message} />;
+    return <GenericFilePreview message={message} variant={variant} />;
   }
 
   // Generic file preview for unsupported types

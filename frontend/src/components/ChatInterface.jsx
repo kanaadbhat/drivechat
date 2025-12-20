@@ -18,6 +18,7 @@ import ChatSidebar from './chat/ChatSidebar';
 import ChatHeader from './chat/ChatHeader';
 import PendingUploadBanner from './chat/PendingUploadBanner';
 import MessageInput from './chat/MessageInput';
+import Skeleton from './ui/Skeleton';
 import {
   clearMessages,
   deleteMessage as dexieDeleteMessage,
@@ -69,6 +70,8 @@ export default function ChatInterface() {
   const [deleteErrors, setDeleteErrors] = useState({});
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [currentDevice, setCurrentDevice] = useState(null);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(true);
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const messagesEndRef = useRef(null);
   const realtimeRef = useRef(null);
   const [showDrivePrompt, setShowDrivePrompt] = useState(false);
@@ -81,6 +84,34 @@ export default function ChatInterface() {
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+  };
+
+  const extractFirstUrl = (text = '') => {
+    const regex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)/i;
+    const match = text.match(regex);
+    return match ? match[0] : null;
+  };
+
+  const buildLinkMeta = (url, textValue) => {
+    try {
+      const normalized = url.startsWith('http') ? url : `https://${url}`;
+      const u = new URL(normalized);
+      const host = u.hostname.replace(/^www\./, '');
+      const isPureUrl = !textValue || textValue.trim() === url.trim();
+      return {
+        linkUrl: normalized,
+        linkTitle: isPureUrl ? host : textValue.trim(),
+        linkDescription: host,
+        linkImage: `https://www.google.com/s2/favicons?sz=128&domain=${host}`,
+      };
+    } catch (e) {
+      return {
+        linkUrl: url,
+        linkTitle: textValue || url,
+        linkDescription: null,
+        linkImage: null,
+      };
+    }
   };
 
   const getDayLabel = (dateKey) => {
@@ -111,7 +142,7 @@ export default function ChatInterface() {
 
   // Helper functions - defined before useEffect hooks that use them
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
   };
 
   const syncPendingDeletions = useCallback(async () => {
@@ -166,9 +197,6 @@ export default function ChatInterface() {
       if (showStarredOnly) {
         url = `${API_URL}/api/messages/category/starred`;
         console.log('Fetching starred messages from:', url);
-      } else if (searchQuery.trim()) {
-        url = `${API_URL}/api/messages/search?q=${encodeURIComponent(searchQuery)}`;
-        console.log('Searching messages:', searchQuery);
       }
 
       const response = await axios.get(url, {
@@ -182,41 +210,64 @@ export default function ChatInterface() {
         (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
       );
 
+      if (user?.id) {
+        for (const msg of sortedMessages) {
+          await upsertMessage(user.id, msg);
+        }
+      }
+
       setMessages(sortedMessages);
     } catch (error) {
       console.error('Error fetching messages:', error);
       setMessages([]);
-      // If starred filter fails, try client-side filtering instead
-      if (showStarredOnly && error.response?.status === 500) {
-        console.log('Falling back to client-side starred filtering');
-        try {
-          const token = await getToken();
-          if (!token) return;
-
-          const response = await axios.get(`${API_URL}/api/messages`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          const allMessages = response.data.messages || [];
-          const starredMessages = allMessages.filter((msg) => msg.starred === true);
-          const sortedMessages = starredMessages.sort(
-            (a, b) => new Date(a.timestamp) - new Date(b.timestamp)
-          );
-          setMessages(sortedMessages);
-        } catch (fallbackError) {
-          console.error('Fallback also failed:', fallbackError);
-        }
-      }
     }
-  }, [getToken, showStarredOnly, searchQuery]);
+  }, [getToken, showStarredOnly, user?.id]);
 
   // useEffect hooks
 
   useEffect(() => {
+    if (searchQuery.trim()) return;
     const fetch = async () => {
+      if (!hasLoadedOnce) setIsLoadingMessages(true);
       await fetchMessages();
+      setIsLoadingMessages(false);
+      setHasLoadedOnce(true);
     };
     fetch();
-  }, [searchQuery, showStarredOnly, fetchMessages]);
+  }, [searchQuery, showStarredOnly, fetchMessages, hasLoadedOnce]);
+
+  useEffect(() => {
+    const runSearch = async () => {
+      const query = searchQuery.trim().toLowerCase();
+      if (!query) return;
+      if (!user?.id) return;
+      try {
+        setIsLoadingMessages(true);
+        const cached = await loadMessages(user.id, 2000);
+        const filtered = cached.filter((msg) => {
+          const haystack = [
+            msg.text,
+            msg.fileName,
+            msg.linkTitle,
+            msg.linkUrl,
+            msg.linkDescription,
+            msg.sender?.deviceName,
+            msg.sender?.deviceType,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+          return haystack.includes(query);
+        });
+        const final = showStarredOnly ? filtered.filter((msg) => msg.starred) : filtered;
+        setMessages(final);
+      } catch (err) {
+        console.warn('[ChatInterface] Dexie search failed', err?.message);
+      }
+      setIsLoadingMessages(false);
+    };
+    runSearch();
+  }, [searchQuery, showStarredOnly, user?.id]);
 
   // On sign-in / app load, reconcile any pending Drive deletions (offline sync)
   useEffect(() => {
@@ -234,6 +285,8 @@ export default function ChatInterface() {
         if (cached?.length) {
           const sorted = cached.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
           setMessages(sorted);
+          setIsLoadingMessages(false);
+          setHasLoadedOnce(true);
         }
       } catch (e) {
         console.warn('Failed to load cached messages:', e?.message);
@@ -480,13 +533,19 @@ export default function ChatInterface() {
         }
       }
 
-      // Send text message if there's text
-      if (inputMessage.trim()) {
+      // Send text/link message if there's text
+      const trimmed = inputMessage.trim();
+      if (trimmed) {
+        const foundUrl = extractFirstUrl(trimmed);
+        const isLink = Boolean(foundUrl);
+        const linkMeta = isLink ? buildLinkMeta(foundUrl, trimmed) : null;
+
         await axios.post(
           `${API_URL}/api/messages`,
           {
-            type: 'text',
-            text: inputMessage.trim(),
+            type: isLink ? 'link' : 'text',
+            text: isLink ? trimmed : trimmed,
+            ...(isLink ? linkMeta : {}),
             sender: {
               deviceId: device.deviceId,
               deviceName: device.name,
@@ -550,11 +609,13 @@ export default function ChatInterface() {
       await axios.delete(`${API_URL}/api/messages/${messageId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
+      await dexieDeleteMessage(user?.id, messageId);
       setDeleteErrors((prev) => {
         const next = { ...prev };
         delete next[messageId];
         return next;
       });
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
       fetchMessages();
     } catch (error) {
       console.error('Error deleting message:', error);
@@ -588,8 +649,16 @@ export default function ChatInterface() {
         }
       );
 
-      // Refetch messages to update the UI
-      await fetchMessages();
+      setMessages((prev) => {
+        const next = prev
+          .map((m) => (m.id === messageId ? { ...m, starred: !isStarred, expiresAt: null } : m))
+          .filter((m) => (showStarredOnly && isStarred ? m.starred : true));
+        const updated = next.find((m) => m.id === messageId);
+        if (updated) {
+          upsertMessage(user?.id, updated);
+        }
+        return next;
+      });
     } catch (error) {
       console.error('Error toggling star:', error);
       alert('Failed to toggle star');
@@ -1000,54 +1069,84 @@ export default function ChatInterface() {
 
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          <PendingUploadBanner pendingUpload={pendingUpload} formatBytes={formatBytes} />
-          {messages.length === 0 ? (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              <div className="text-center">
-                <p className="text-lg mb-2">
-                  {showStarredOnly ? 'No starred messages' : 'No messages yet'}
-                </p>
-                <p className="text-sm">
-                  {showStarredOnly
-                    ? 'Star messages to see them here'
-                    : 'Send your first message below'}
-                </p>
+          {isLoadingMessages ? (
+            <div className="space-y-4 animate-fade-in">
+              <div className="flex gap-3 items-start">
+                <Skeleton className="h-9 w-9 rounded-full" />
+                <div className="flex-1 space-y-3">
+                  <Skeleton className="h-4 w-1/3" />
+                  <Skeleton className="h-16 w-full" />
+                </div>
               </div>
+              <div className="flex gap-3 items-start justify-end">
+                <div className="flex-1 space-y-3">
+                  <Skeleton className="h-4 w-1/4 ml-auto" />
+                  <Skeleton className="h-16 w-full" />
+                </div>
+                <Skeleton className="h-9 w-9 rounded-full" />
+              </div>
+              {[...Array(3)].map((_, idx) => (
+                <div key={`chat-skel-${idx}`} className="flex gap-3 items-start">
+                  <Skeleton className="h-9 w-9 rounded-full" />
+                  <div className="flex-1 space-y-2">
+                    <Skeleton className="h-4 w-1/2" />
+                    <Skeleton className="h-12 w-full" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : (
-            timelineItems.map((item) =>
-              item.type === 'separator' ? (
-                <div key={`separator-${item.date}`} className="flex justify-center">
-                  <span className="px-4 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400 bg-gray-900/70 border border-gray-800 rounded-full shadow-sm">
-                    {getDayLabel(item.date)}
-                  </span>
+            <>
+              <PendingUploadBanner pendingUpload={pendingUpload} formatBytes={formatBytes} />
+              {messages.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-gray-500">
+                  <div className="text-center">
+                    <p className="text-lg mb-2">
+                      {showStarredOnly ? 'No starred messages' : 'No messages yet'}
+                    </p>
+                    <p className="text-sm">
+                      {showStarredOnly
+                        ? 'Star messages to see them here'
+                        : 'Send your first message below'}
+                    </p>
+                  </div>
                 </div>
               ) : (
-                <MessageItem
-                  key={item.message.id}
-                  message={item.message}
-                  currentDevice={currentDevice}
-                  editingMessage={editingMessage}
-                  editText={editText}
-                  setEditText={setEditText}
-                  setEditingMessage={setEditingMessage}
-                  handleEditMessage={handleEditMessage}
-                  handleContextMenu={handleContextMenu}
-                  handleDownloadFile={handleDownloadFile}
-                  toggleStar={toggleStar}
-                  setConfirmDelete={setConfirmDelete}
-                  closeContextMenu={closeContextMenu}
-                  formatBytes={formatBytes}
-                  downloadState={downloadStates[item.message.id]}
-                  deleteError={deleteErrors[item.message.id]}
-                  getFileDisplayUrl={getFileDisplayUrl}
-                  getThumbnailUrl={getThumbnailUrl}
-                  getFileIcon={getFileIcon}
-                />
-              )
-            )
+                timelineItems.map((item) =>
+                  item.type === 'separator' ? (
+                    <div key={`separator-${item.date}`} className="flex justify-center">
+                      <span className="px-4 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400 bg-gray-900/70 border border-gray-800 rounded-full shadow-sm">
+                        {getDayLabel(item.date)}
+                      </span>
+                    </div>
+                  ) : (
+                    <MessageItem
+                      key={item.message.id}
+                      message={item.message}
+                      currentDevice={currentDevice}
+                      editingMessage={editingMessage}
+                      editText={editText}
+                      setEditText={setEditText}
+                      setEditingMessage={setEditingMessage}
+                      handleEditMessage={handleEditMessage}
+                      handleContextMenu={handleContextMenu}
+                      handleDownloadFile={handleDownloadFile}
+                      toggleStar={toggleStar}
+                      setConfirmDelete={setConfirmDelete}
+                      closeContextMenu={closeContextMenu}
+                      formatBytes={formatBytes}
+                      downloadState={downloadStates[item.message.id]}
+                      deleteError={deleteErrors[item.message.id]}
+                      getFileDisplayUrl={getFileDisplayUrl}
+                      getThumbnailUrl={getThumbnailUrl}
+                      getFileIcon={getFileIcon}
+                    />
+                  )
+                )
+              )}
+              <div ref={messagesEndRef} />
+            </>
           )}
-          <div ref={messagesEndRef} />
         </div>
 
         <MessageContextMenu

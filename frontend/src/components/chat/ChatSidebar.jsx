@@ -72,28 +72,6 @@ export default function ChatSidebar({
             <Settings className="w-4 h-4" />
             Settings
           </button>
-          <button
-            onClick={() => {
-              console.log('=== FULL DEBUG INFO ===');
-              console.log('User object:', JSON.stringify(user, null, 2));
-              console.log('External accounts:', user?.externalAccounts);
-              console.log('Session object:', JSON.stringify(session, null, 2));
-              console.log('Drive authorized state:', driveAuthorized);
-
-              const statusMsg = driveAuthorized
-                ? '✅ Google Drive is connected for file uploads'
-                : "⚠️ Google Drive authorization needed.\n\nWhen you upload a file, you'll be prompted to sign in.";
-
-              alert(
-                `User: ${user?.firstName || 'Unknown'}\nEmail: ${
-                  user?.primaryEmailAddress?.emailAddress || 'N/A'
-                }\n\n${statusMsg}\n\nCheck browser console for full details!`
-              );
-            }}
-            className="w-full px-4 py-2 text-left text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors flex items-center gap-3 text-xs"
-          >
-            Debug User Data
-          </button>
         </div>
       </div>
 

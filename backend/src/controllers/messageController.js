@@ -51,6 +51,10 @@ export const createMessage = asyncHandler(async (req, res) => {
     fileCategory,
     filePreviewUrl,
     sender,
+    linkUrl,
+    linkTitle,
+    linkDescription,
+    linkImage,
     // Legacy support for old client versions
     deviceId,
     deviceName,
@@ -83,6 +87,12 @@ export const createMessage = asyncHandler(async (req, res) => {
     });
   }
 
+  if (type === 'link' && !linkUrl) {
+    return res.status(400).json({
+      error: 'Link message requires linkUrl',
+    });
+  }
+
   // Create message data
   const messageData = {
     type,
@@ -112,6 +122,12 @@ export const createMessage = asyncHandler(async (req, res) => {
     messageData.fileCiphertext = req.body.fileCiphertext || null;
     messageData.encryption = req.body.encryption || null;
     messageData.filePreview = req.body.filePreview || null;
+  } else if (type === 'link') {
+    messageData.text = text || null;
+    messageData.linkUrl = linkUrl;
+    messageData.linkTitle = linkTitle || null;
+    messageData.linkDescription = linkDescription || null;
+    messageData.linkImage = linkImage || null;
   }
 
   // Create message in Firestore
@@ -213,7 +229,7 @@ export const updateMessage = asyncHandler(async (req, res) => {
   }
 
   // Handle text editing (only for text messages)
-  if (text && existingMessage.type === 'text') {
+  if (text && (existingMessage.type === 'text' || existingMessage.type === 'link')) {
     updates.text = text;
     updates.edited = true;
     updates.editedAt = new Date().toISOString();

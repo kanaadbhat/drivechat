@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Play, Pause, FileText, Download } from 'lucide-react';
-import { downloadFileFromDrive } from '../utils/gisClient';
+import { downloadFileFromDrive, hasValidToken } from '../utils/gisClient';
 
 // Format duration from milliseconds to MM:SS or HH:MM:SS
 export function formatDuration(ms) {
@@ -71,6 +71,11 @@ export function ImagePreview({
   };
 
   const downloadFallback = useCallback(async () => {
+    if (!hasValidToken()) {
+      console.info('[ImagePreview] Skipping fallback download; Drive token missing');
+      onFallback?.();
+      return;
+    }
     setDownloadAttempted(true);
     try {
       const blob = await downloadFileFromDrive(fileId, message.mimeType);
@@ -129,6 +134,11 @@ export function VideoPreview({ message, getFileUrl, variant = 'default', onFallb
     let revokedUrl = '';
     let cancelled = false;
     const load = async () => {
+      if (!hasValidToken()) {
+        console.info('[VideoPreview] Skipping preview; Drive token missing');
+        onFallback?.();
+        return;
+      }
       try {
         const blob = await downloadFileFromDrive(fileId, mimeType);
         if (cancelled) return;
@@ -238,6 +248,11 @@ export function PDFPreview({ message, variant = 'default', onFallback }) {
     let revokedUrl = '';
     let cancelled = false;
     const load = async () => {
+      if (!hasValidToken()) {
+        console.info('[PDFPreview] Skipping preview; Drive token missing');
+        onFallback?.();
+        return;
+      }
       try {
         const blob = await downloadFileFromDrive(fileId, mimeType || 'application/pdf');
         if (cancelled) return;

@@ -57,3 +57,24 @@ export async function clearAllUserData(userId) {
   await Promise.all([clearMessages(userId), clearMeta(userId)]);
   console.info('[dexie] clearAllUserData', { userId });
 }
+
+export async function deleteDb() {
+  try {
+    await db.delete();
+    console.info('[dexie] database deleted');
+  } catch (err) {
+    console.warn('[dexie] failed to delete database', err?.message);
+    throw err;
+  }
+}
+
+export async function resetDb() {
+  try {
+    await db.delete();
+    await db.open();
+    console.info('[dexie] database reset');
+  } catch (err) {
+    console.warn('[dexie] failed to reset database', err?.message);
+    throw err;
+  }
+}

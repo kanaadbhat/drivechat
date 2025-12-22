@@ -250,9 +250,10 @@ async function getOrCreateAppFolder(accessToken) {
  * Upload a file to Google Drive (client-side)
  * @param {File} file - File object to upload
  * @param {Function} onProgress - Optional progress callback (0-100)
+ * @param {Function} onAbortable - Optional callback receiving an abort function for caller control
  * @returns {Object} - { driveFileId, webViewLink, webContentLink, mimeType, size, name }
  */
-export async function uploadFileToDrive(file, onProgress) {
+export async function uploadFileToDrive(file, onProgress, onAbortable) {
   const accessToken = await getAccessToken();
   const folderId = await getOrCreateAppFolder(accessToken);
 
@@ -287,6 +288,16 @@ export async function uploadFileToDrive(file, onProgress) {
     const xhr = new XMLHttpRequest();
     const startedAt = Date.now();
     let lastLoaded = 0;
+
+    if (onAbortable) {
+      onAbortable(() => {
+        xhr.abort();
+        const abortError = new Error('Upload aborted');
+        abortError.name = 'AbortError';
+        abortError.code = 'abort';
+        reject(abortError);
+      });
+    }
 
     xhr.open('PUT', uploadUri, true);
     xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');

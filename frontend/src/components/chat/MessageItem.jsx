@@ -1,5 +1,8 @@
 import { useMemo } from 'react';
 import dayjs from 'dayjs';
+import relativeTime from 'dayjs/plugin/relativeTime';
+
+dayjs.extend(relativeTime);
 import { Star, StarOff, Trash2, ExternalLink } from 'lucide-react';
 import FilePreview from '../FilePreview';
 import { DEVICE_TYPES, getDeviceIcon } from '../../utils/deviceManager';

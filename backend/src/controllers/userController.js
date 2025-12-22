@@ -17,6 +17,8 @@ export const getCurrentUser = asyncHandler(async (req, res) => {
       isPro: false,
       driveConnected: false,
       driveFolderId: null,
+      encryptionSalt: null,
+      encryptionVersion: 'v1',
       createdAt: new Date().toISOString(),
       lastActive: new Date().toISOString(),
       totalMessagesCount: 0,
@@ -47,7 +49,13 @@ export const updateUser = asyncHandler(async (req, res) => {
   const updates = req.body;
 
   // Don't allow updating certain fields
-  const allowedFields = ['name', 'driveConnected', 'driveFolderId'];
+  const allowedFields = [
+    'name',
+    'driveConnected',
+    'driveFolderId',
+    'encryptionSalt',
+    'encryptionVersion',
+  ];
   const filteredUpdates = {};
 
   allowedFields.forEach((field) => {

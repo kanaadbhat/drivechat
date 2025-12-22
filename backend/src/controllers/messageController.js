@@ -60,6 +60,9 @@ export const createMessage = asyncHandler(async (req, res) => {
     deviceName,
   } = req.body;
 
+  const hasCiphertext = Boolean(req.body.ciphertext);
+  const hasFileCiphertext = Boolean(req.body.fileCiphertext);
+
   // Use sender object if provided, otherwise fallback to legacy deviceId/deviceName
   const senderData = sender || {
     deviceId: deviceId,
@@ -75,21 +78,21 @@ export const createMessage = asyncHandler(async (req, res) => {
     });
   }
 
-  if (type === 'text' && !text) {
+  if (type === 'text' && !text && !hasCiphertext) {
     return res.status(400).json({
-      error: 'Text message requires text field',
+      error: 'Text message requires text or ciphertext field',
     });
   }
 
-  if (type === 'file' && (!fileId || !fileName)) {
+  if (type === 'file' && !hasFileCiphertext && (!fileId || !fileName)) {
     return res.status(400).json({
       error: 'File message requires fileId and fileName',
     });
   }
 
-  if (type === 'link' && !linkUrl) {
+  if (type === 'link' && !linkUrl && !hasCiphertext) {
     return res.status(400).json({
-      error: 'Link message requires linkUrl',
+      error: 'Link message requires linkUrl or ciphertext field',
     });
   }
 
@@ -111,23 +114,31 @@ export const createMessage = asyncHandler(async (req, res) => {
 
   // Add type-specific fields
   if (type === 'text') {
-    messageData.text = text;
+    messageData.text = hasCiphertext ? null : text;
+    if (hasCiphertext) {
+      messageData.ciphertext = req.body.ciphertext;
+      messageData.encryption = req.body.encryption || null;
+    }
   } else if (type === 'file') {
-    messageData.fileId = fileId;
-    messageData.fileName = fileName;
+    messageData.fileId = fileId || null;
+    messageData.fileName = hasFileCiphertext ? null : fileName;
     messageData.fileSize = fileSize || 0;
     messageData.mimeType = mimeType || 'application/octet-stream';
     messageData.fileCategory = fileCategory || 'others';
-    messageData.filePreviewUrl = filePreviewUrl || null;
+    messageData.filePreviewUrl = hasFileCiphertext ? null : filePreviewUrl || null;
     messageData.fileCiphertext = req.body.fileCiphertext || null;
     messageData.encryption = req.body.encryption || null;
     messageData.filePreview = req.body.filePreview || null;
   } else if (type === 'link') {
-    messageData.text = text || null;
-    messageData.linkUrl = linkUrl;
-    messageData.linkTitle = linkTitle || null;
-    messageData.linkDescription = linkDescription || null;
-    messageData.linkImage = linkImage || null;
+    messageData.text = hasCiphertext ? null : text || null;
+    messageData.linkUrl = hasCiphertext ? null : linkUrl;
+    messageData.linkTitle = hasCiphertext ? null : linkTitle || null;
+    messageData.linkDescription = hasCiphertext ? null : linkDescription || null;
+    messageData.linkImage = hasCiphertext ? null : linkImage || null;
+    if (hasCiphertext) {
+      messageData.ciphertext = req.body.ciphertext;
+      messageData.encryption = req.body.encryption || null;
+    }
   }
 
   // Create message in Firestore
@@ -192,7 +203,7 @@ export const createMessage = asyncHandler(async (req, res) => {
 export const updateMessage = asyncHandler(async (req, res) => {
   const { userId } = req;
   const { id } = req.params;
-  const { starred, text } = req.body;
+  const { starred, text, ciphertext, encryption } = req.body;
 
   // Get existing message
   const existingMessage = await firestoreHelpers.getMessage(userId, id);
@@ -229,7 +240,17 @@ export const updateMessage = asyncHandler(async (req, res) => {
   }
 
   // Handle text editing (only for text messages)
-  if (text && (existingMessage.type === 'text' || existingMessage.type === 'link')) {
+  if (ciphertext && (existingMessage.type === 'text' || existingMessage.type === 'link')) {
+    updates.ciphertext = ciphertext;
+    updates.encryption = encryption || existingMessage.encryption || null;
+    updates.text = null;
+    updates.linkUrl = null;
+    updates.linkTitle = null;
+    updates.linkDescription = null;
+    updates.linkImage = null;
+    updates.edited = true;
+    updates.editedAt = new Date().toISOString();
+  } else if (text && (existingMessage.type === 'text' || existingMessage.type === 'link')) {
     updates.text = text;
     updates.edited = true;
     updates.editedAt = new Date().toISOString();
@@ -275,25 +296,33 @@ export const deleteMessage = asyncHandler(async (req, res) => {
   }
 
   // If it's a file message, request client-side Drive cleanup via realtime
-  if (message.type === 'file' && message.fileId) {
+  if (message.type === 'file') {
+    const deletionPayload = {
+      messageId: id,
+      fileId: message.fileId || null,
+      fileFolderId: message.fileFolderId || null,
+      mimeType: message.mimeType,
+      fileName: message.fileName,
+      fileCiphertext: message.fileCiphertext || null,
+      encryption: message.encryption || null,
+      reason: 'user-delete',
+    };
+
     try {
-      await firestoreHelpers.addPendingDeletion(userId, {
-        messageId: id,
-        fileId: message.fileId,
-        fileFolderId: message.fileFolderId || null,
-        mimeType: message.mimeType,
-        fileName: message.fileName,
-        reason: 'user-delete',
-      });
+      if (deletionPayload.fileId || deletionPayload.fileCiphertext) {
+        await firestoreHelpers.addPendingDeletion(userId, deletionPayload);
+      }
 
       await publishUserEvent(userId, {
         type: 'drive.delete.request',
         messageId: id,
         payload: {
-          fileId: message.fileId,
-          fileFolderId: message.fileFolderId || null,
-          mimeType: message.mimeType,
-          fileName: message.fileName,
+          fileId: deletionPayload.fileId,
+          fileCiphertext: deletionPayload.fileCiphertext,
+          encryption: deletionPayload.encryption,
+          fileFolderId: deletionPayload.fileFolderId,
+          mimeType: deletionPayload.mimeType,
+          fileName: deletionPayload.fileName,
         },
       });
     } catch {
@@ -335,12 +364,12 @@ export const searchMessages = asyncHandler(async (req, res) => {
     });
   }
 
-  const messages = await firestoreHelpers.searchMessages(userId, q);
-
+  // Encrypted content cannot be server-searched; clients perform local search over decrypted cache.
   res.json({
-    messages,
-    count: messages.length,
+    messages: [],
+    count: 0,
     query: q,
+    note: 'Encrypted messages are searchable only on the client.',
   });
 });
 
@@ -419,7 +448,9 @@ export const deleteAllMessages = asyncHandler(async (req, res) => {
   let filesFailed = 0;
 
   // Request client-side Drive cleanup via realtime events
-  const fileMessages = messages.filter((msg) => msg.type === 'file' && msg.fileId);
+  const fileMessages = messages.filter(
+    (msg) => msg.type === 'file' && (msg.fileId || msg.fileCiphertext)
+  );
 
   if (fileMessages.length > 0) {
     await Promise.all(
@@ -427,10 +458,12 @@ export const deleteAllMessages = asyncHandler(async (req, res) => {
         try {
           await firestoreHelpers.addPendingDeletion(userId, {
             messageId: msg.id,
-            fileId: msg.fileId,
+            fileId: msg.fileId || null,
             fileFolderId: msg.fileFolderId || null,
             mimeType: msg.mimeType,
             fileName: msg.fileName,
+            fileCiphertext: msg.fileCiphertext || null,
+            encryption: msg.encryption || null,
             reason: 'bulk-delete',
           });
 
@@ -438,7 +471,9 @@ export const deleteAllMessages = asyncHandler(async (req, res) => {
             type: 'drive.delete.request',
             messageId: msg.id,
             payload: {
-              fileId: msg.fileId,
+              fileId: msg.fileId || null,
+              fileCiphertext: msg.fileCiphertext || null,
+              encryption: msg.encryption || null,
               fileFolderId: msg.fileFolderId || null,
               mimeType: msg.mimeType,
               fileName: msg.fileName,

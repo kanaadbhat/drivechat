@@ -1,23 +1,20 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth, useUser, useSession } from '@clerk/clerk-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
-import dayjs from 'dayjs';
-import relativeTime from 'dayjs/plugin/relativeTime';
 import { File, ImageIcon, FileText } from 'lucide-react';
-import {
-  initializeDevice,
-  getCurrentDevice,
-  isDeviceRegistered,
-  getDeviceIcon,
-  DEVICE_TYPES,
-} from '../utils/deviceManager';
-import MessageItem from './chat/MessageItem';
+import { initializeDevice } from '../utils/deviceManager';
+import ChatBody from './chat/ChatBody';
 import MessageContextMenu from './chat/MessageContextMenu';
 import ChatSidebar from './chat/ChatSidebar';
 import ChatHeader from './chat/ChatHeader';
-import PendingUploadBanner from './chat/PendingUploadBanner';
 import MessageInput from './chat/MessageInput';
+import {
+  EncryptionGate,
+  DriveAuthOverlay,
+  DeleteConfirmModal,
+  DrivePromptModal,
+} from './chat/ChatModals';
 import Skeleton from './ui/Skeleton';
 import {
   clearMessages,
@@ -25,6 +22,7 @@ import {
   loadMessages,
   upsertMessage,
   clearAllUserData,
+  deleteDb,
 } from '../db/dexie';
 import { createRealtimeClient } from '../utils/realtimeClient';
 import {
@@ -39,20 +37,36 @@ import {
   clearStoredToken,
   downloadFileFromDrive,
 } from '../utils/gisClient';
-
-dayjs.extend(relativeTime);
+import { clearCurrentDevice } from '../utils/deviceManager';
+import {
+  buildEncryptionHeader,
+  clearCachedMek,
+  clearCachedSalt,
+  decryptJson,
+  encryptJson,
+  loadCachedMek,
+  loadCachedSalt,
+} from '../utils/crypto';
+import { formatBytes, extractFirstUrl, buildLinkMeta } from '../utils/messageUtils';
+import { useUserChangeGuard } from '../hooks/useUserChangeGuard';
 
 const API_URL =
   import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 const ENABLE_REALTIME =
   String(import.meta.env.VITE_ENABLE_REALTIME || 'false').toLowerCase() === 'true';
+const PRECHAT_KEY = 'drivechat_prechat_passed';
 
 export default function ChatInterface() {
   const { signOut, getToken } = useAuth();
   const { user } = useUser();
   const { session } = useSession();
   const navigate = useNavigate();
+  const location = useLocation();
   const [messages, setMessages] = useState([]);
+  const [mek, setMek] = useState(null);
+  const [encryptionSalt, setEncryptionSalt] = useState(null);
+  const [encryptionReady, setEncryptionReady] = useState(false);
+  const [encryptionError, setEncryptionError] = useState('');
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [inputMessage, setInputMessage] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
@@ -77,53 +91,102 @@ export default function ChatInterface() {
   const [showDrivePrompt, setShowDrivePrompt] = useState(false);
   const [authState, setAuthState] = useState({ status: 'idle', message: '' });
 
-  const formatBytes = (bytes = 0, decimals = 1) => {
-    if (!bytes) return '0 B';
-    const k = 1024;
-    const dm = decimals < 0 ? 0 : decimals;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-  };
+  useUserChangeGuard(user?.id);
 
-  const extractFirstUrl = (text = '') => {
-    const regex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)/i;
-    const match = text.match(regex);
-    return match ? match[0] : null;
-  };
-
-  const buildLinkMeta = (url, textValue) => {
-    try {
-      const normalized = url.startsWith('http') ? url : `https://${url}`;
-      const u = new URL(normalized);
-      const host = u.hostname.replace(/^www\./, '');
-      const isPureUrl = !textValue || textValue.trim() === url.trim();
-      return {
-        linkUrl: normalized,
-        linkTitle: isPureUrl ? host : textValue.trim(),
-        linkDescription: host,
-        linkImage: `https://www.google.com/s2/favicons?sz=128&domain=${host}`,
-      };
-    } catch (e) {
-      return {
-        linkUrl: url,
-        linkTitle: textValue || url,
-        linkDescription: null,
-        linkImage: null,
-      };
+  useEffect(() => {
+    if (!user?.id) return;
+    console.info('[ChatInterface] user changed (mount/rehydrate), clearing caches');
+    setMessages([]);
+    setHasLoadedOnce(false);
+    (async () => {
+      try {
+        await clearMessages(user.id);
+        console.info('[ChatInterface] cleared Dexie cache for user on mount');
+      } catch (err) {
+        console.warn('[ChatInterface] failed to clear Dexie cache on mount', err?.message);
+      }
+    })();
+    const prechatPassed = localStorage.getItem(PRECHAT_KEY);
+    if (!prechatPassed) {
+      navigate('/prechat', { state: { redirect: location.pathname || '/chat' } });
     }
-  };
+  }, [user?.id, navigate, location.pathname]);
 
-  const getDayLabel = (dateKey) => {
-    const date = dayjs(dateKey, 'YYYY-MM-DD');
-    const today = dayjs().startOf('day');
-    const yesterday = today.subtract(1, 'day');
+  useEffect(() => {
+    if (!user?.id) return;
+    const cachedMek = loadCachedMek(user.id);
+    const cachedSalt = loadCachedSalt(user.id);
+    if (cachedSalt) setEncryptionSalt(cachedSalt);
+    if (cachedMek) {
+      setMek(cachedMek);
+      setEncryptionReady(true);
+      setEncryptionError('');
+    } else {
+      setEncryptionReady(false);
+      setEncryptionError('Encryption key missing. Return to PreChat to unlock.');
+    }
+  }, [user?.id]);
 
-    if (date.isSame(today, 'day')) return 'Today';
-    if (date.isSame(yesterday, 'day')) return 'Yesterday';
-    if (date.isSame(today, 'year')) return date.format('MMMM D');
-    return date.format('MMMM D, YYYY');
-  };
+  useEffect(() => {
+    if (mek) {
+      setEncryptionReady(true);
+      setEncryptionError('');
+    }
+  }, [mek]);
+
+  const decryptMessagePayload = useCallback(
+    async (message) => {
+      if (!message) return message;
+      if (!message.ciphertext && !message.fileCiphertext) return message;
+      if (!mek) return { ...message, decryptionError: 'missing-key' };
+
+      try {
+        if (message.type === 'file' && message.fileCiphertext) {
+          const payload = await decryptJson(mek, {
+            ciphertext: message.fileCiphertext,
+            iv: message.encryption?.iv,
+          });
+          return {
+            ...message,
+            ...payload,
+            fileId: payload?.fileId,
+            fileName: payload?.fileName,
+            fileSize: payload?.fileSize,
+            mimeType: payload?.mimeType,
+            fileCategory: payload?.fileCategory,
+            filePreviewUrl: payload?.filePreviewUrl,
+          };
+        }
+
+        if (message.ciphertext) {
+          const payload = await decryptJson(mek, {
+            ciphertext: message.ciphertext,
+            iv: message.encryption?.iv,
+          });
+          return {
+            ...message,
+            ...payload,
+          };
+        }
+      } catch (err) {
+        console.warn('[ChatInterface] decrypt failed', err?.message);
+        return { ...message, decryptionError: err?.message || 'Decrypt failed' };
+      }
+
+      return message;
+    },
+    [mek]
+  );
+
+  const encryptPayload = useCallback(
+    async (payload) => {
+      if (!mek) throw new Error('Encryption key missing');
+      const envelope = await encryptJson(mek, payload);
+      const encryption = buildEncryptionHeader(envelope, encryptionSalt);
+      return { envelope, encryption };
+    },
+    [mek, encryptionSalt]
+  );
   // Initialize GIS on mount
   useEffect(() => {
     initGisClient();
@@ -191,6 +254,18 @@ export default function ChatInterface() {
       const token = await getToken();
       if (!token) return;
 
+      if (!mek) {
+        setEncryptionReady(false);
+        setEncryptionError('Encryption key missing. Return to PreChat to unlock.');
+        return;
+      }
+
+      console.info('[ChatInterface] fetchMessages start', {
+        showStarredOnly,
+        hasMek: Boolean(mek),
+        searchQuery,
+      });
+
       let url = `${API_URL}/api/messages`;
 
       // If showing starred only, fetch from starred endpoint
@@ -203,7 +278,8 @@ export default function ChatInterface() {
         headers: { Authorization: `Bearer ${token}` },
       });
 
-      console.log('Received messages:', response.data.messages?.length, 'messages');
+      const receivedCount = response.data.messages?.length || 0;
+      console.info('[ChatInterface] fetchMessages response', { count: receivedCount, url });
 
       // Reverse the order so newest messages appear at the bottom
       const sortedMessages = (response.data.messages || []).sort(
@@ -211,17 +287,33 @@ export default function ChatInterface() {
       );
 
       if (user?.id) {
-        for (const msg of sortedMessages) {
-          await upsertMessage(user.id, msg);
+        try {
+          await clearMessages(user.id);
+          console.info('[ChatInterface] cleared Dexie before upsert');
+        } catch (err) {
+          console.warn('[ChatInterface] failed to clear Dexie before upsert', err?.message);
         }
       }
 
-      setMessages(sortedMessages);
+      const decryptedMessages = [];
+      for (const msg of sortedMessages) {
+        const decrypted = await decryptMessagePayload(msg);
+        if (user?.id) {
+          await upsertMessage(user.id, decrypted);
+        }
+        decryptedMessages.push(decrypted);
+      }
+
+      console.info('[ChatInterface] decrypted + stored', {
+        decryptedCount: decryptedMessages.length,
+      });
+
+      setMessages(decryptedMessages);
     } catch (error) {
       console.error('Error fetching messages:', error);
       setMessages([]);
     }
-  }, [getToken, showStarredOnly, user?.id]);
+  }, [decryptMessagePayload, getToken, mek, showStarredOnly, user?.id]);
 
   // useEffect hooks
 
@@ -283,6 +375,9 @@ export default function ChatInterface() {
       try {
         const cached = await loadMessages(user.id, 1000);
         if (cached?.length) {
+          console.info('[ChatInterface] loaded cached messages for realtime bootstrap', {
+            count: cached.length,
+          });
           const sorted = cached.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
           setMessages(sorted);
           setIsLoadingMessages(false);
@@ -341,6 +436,10 @@ export default function ChatInterface() {
           onStatus: ({ connected }) => setRealtimeConnected(Boolean(connected)),
           onEvent: async (event) => {
             if (!event?.type) return;
+            console.info('[ChatInterface] realtime event', {
+              type: event.type,
+              id: event.messageId || event?.message?.id,
+            });
 
             if (event.type === 'messages.cleared') {
               await clearMessages(user.id);
@@ -358,10 +457,13 @@ export default function ChatInterface() {
             if (event.type === 'message.created' || event.type === 'message.updated') {
               const msg = event.message;
               if (!msg?.id) return;
-              await upsertMessage(user.id, msg);
+              const decrypted = await decryptMessagePayload(msg);
+              await upsertMessage(user.id, decrypted);
               setMessages((prev) => {
-                const exists = prev.some((m) => m.id === msg.id);
-                const next = exists ? prev.map((m) => (m.id === msg.id ? msg : m)) : [...prev, msg];
+                const exists = prev.some((m) => m.id === decrypted.id);
+                const next = exists
+                  ? prev.map((m) => (m.id === decrypted.id ? decrypted : m))
+                  : [...prev, decrypted];
                 return next.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
               });
               return;
@@ -419,13 +521,13 @@ export default function ChatInterface() {
       realtimeRef.current = null;
       setRealtimeConnected(false);
     };
-  }, [user?.id, currentDevice?.deviceId, getToken]);
+  }, [decryptMessagePayload, user?.id, currentDevice?.deviceId, getToken]);
 
   // Initialize device on mount
   useEffect(() => {
     const device = initializeDevice();
     setCurrentDevice(device);
-    console.log('Device initialized:', device);
+    console.info('[ChatInterface] Device initialized', device);
   }, []);
 
   useEffect(() => {
@@ -435,6 +537,11 @@ export default function ChatInterface() {
   const sendMessage = async () => {
     if (!inputMessage.trim() && !selectedFile) return;
     if (isSending) return; // Prevent double-sending
+
+    if (!mek) {
+      setEncryptionError('Encryption key missing. Return to PreChat to unlock.');
+      return;
+    }
 
     setIsSending(true);
 
@@ -452,6 +559,12 @@ export default function ChatInterface() {
       const device = currentDevice || initializeDevice();
       if (!currentDevice) setCurrentDevice(device);
 
+      const senderPayload = {
+        deviceId: device.deviceId,
+        deviceName: device.name,
+        deviceType: device.type,
+      };
+
       // If file is selected, upload to Google Drive (client-side)
       let driveFileId = null;
       let fileName = null;
@@ -462,31 +575,38 @@ export default function ChatInterface() {
       let webContentLink = null;
 
       if (selectedFile) {
-        console.log('   - 📎 File selected:', selectedFile.name);
+        console.info('   - 📎 File selected:', selectedFile.name);
         setPendingUpload({
           fileName: selectedFile.name,
           progress: 0,
           speed: 0,
           status: 'uploading',
           error: null,
+          abort: null,
         });
         try {
-          console.log('   - 📤 Uploading file to Google Drive (client-side)...');
+          console.info('   - 📤 Uploading file to Google Drive (client-side)...');
 
-          const uploadResult = await uploadFileToDrive(selectedFile, (progressPayload) => {
-            if (!progressPayload) return;
-            setPendingUpload((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    progress: progressPayload.percent ?? prev.progress,
-                    speed: progressPayload.speedBps ?? prev.speed,
-                  }
-                : prev
-            );
-          });
+          const uploadResult = await uploadFileToDrive(
+            selectedFile,
+            (progressPayload) => {
+              if (!progressPayload) return;
+              setPendingUpload((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      progress: progressPayload.percent ?? prev.progress,
+                      speed: progressPayload.speedBps ?? prev.speed,
+                    }
+                  : prev
+              );
+            },
+            (abortFn) => {
+              setPendingUpload((prev) => (prev ? { ...prev, abort: abortFn } : prev));
+            }
+          );
 
-          console.log('   - ✅ File uploaded successfully:', uploadResult.fileName);
+          console.info('   - ✅ File uploaded successfully:', uploadResult.fileName);
           setDriveAuthorized(true);
 
           driveFileId = uploadResult.driveFileId;
@@ -511,20 +631,26 @@ export default function ChatInterface() {
 
           setPendingUpload(null);
         } catch (uploadError) {
-          console.error('❌ File upload failed:', uploadError.message);
-          if (uploadError?.type) {
-            console.warn('GIS popup error type:', uploadError.type, uploadError);
-          }
+          if (uploadError?.name === 'AbortError' || uploadError?.code === 'abort') {
+            setPendingUpload((prev) =>
+              prev ? { ...prev, status: 'cancelled', error: null } : null
+            );
+          } else {
+            console.error('❌ File upload failed:', uploadError.message);
+            if (uploadError?.type) {
+              console.warn('GIS popup error type:', uploadError.type, uploadError);
+            }
 
-          setPendingUpload((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  status: 'error',
-                  error: uploadError.message || 'Upload failed',
-                }
-              : null
-          );
+            setPendingUpload((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    status: 'error',
+                    error: uploadError.message || 'Upload failed',
+                  }
+                : null
+            );
+          }
 
           setSelectedFile(null);
 
@@ -540,17 +666,22 @@ export default function ChatInterface() {
         const isLink = Boolean(foundUrl);
         const linkMeta = isLink ? buildLinkMeta(foundUrl, trimmed) : null;
 
+        const { envelope, encryption } = await encryptPayload({
+          type: isLink ? 'link' : 'text',
+          text: trimmed,
+          linkUrl: linkMeta?.linkUrl || null,
+          linkTitle: linkMeta?.linkTitle || null,
+          linkDescription: linkMeta?.linkDescription || null,
+          linkImage: linkMeta?.linkImage || null,
+        });
+
         await axios.post(
           `${API_URL}/api/messages`,
           {
             type: isLink ? 'link' : 'text',
-            text: isLink ? trimmed : trimmed,
-            ...(isLink ? linkMeta : {}),
-            sender: {
-              deviceId: device.deviceId,
-              deviceName: device.name,
-              deviceType: device.type,
-            },
+            ciphertext: envelope.ciphertext,
+            encryption,
+            sender: senderPayload,
           },
           {
             headers: {
@@ -563,23 +694,23 @@ export default function ChatInterface() {
 
       // Send file message metadata if there's a file
       if (driveFileId) {
+        const { envelope, encryption } = await encryptPayload({
+          type: 'file',
+          fileId: driveFileId,
+          fileName,
+          fileSize,
+          mimeType,
+          fileCategory,
+          filePreviewUrl: getDriveContentUrl(driveFileId),
+        });
+
         await axios.post(
           `${API_URL}/api/messages`,
           {
             type: 'file',
-            // Store Drive file ID directly (no encryption for now)
-            fileId: driveFileId,
-            fileName,
-            fileSize,
-            mimeType,
-            fileCategory,
-            // Store direct Drive URLs
-            filePreviewUrl: getDriveContentUrl(driveFileId),
-            sender: {
-              deviceId: device.deviceId,
-              deviceName: device.name,
-              deviceType: device.type,
-            },
+            fileCiphertext: envelope.ciphertext,
+            encryption,
+            sender: senderPayload,
           },
           {
             headers: {
@@ -601,10 +732,35 @@ export default function ChatInterface() {
     }
   };
 
-  const performDelete = async (messageId) => {
+  const handlePauseUpload = useCallback(() => {
+    if (pendingUpload?.abort) {
+      pendingUpload.abort();
+    }
+  }, [pendingUpload]);
+
+  const handleCancelUpload = useCallback(() => {
+    if (pendingUpload?.abort) {
+      pendingUpload.abort();
+    }
+    setPendingUpload(null);
+    setSelectedFile(null);
+    setIsSending(false);
+  }, [pendingUpload]);
+
+  const performDelete = async (message) => {
+    const messageId = typeof message === 'string' ? message : message?.id;
     try {
       const token = await getToken();
       if (!token) return;
+
+      const fileId = typeof message === 'object' ? message?.fileId : null;
+      if (fileId) {
+        try {
+          await deleteFileFromDrive(fileId);
+        } catch (driveErr) {
+          console.warn('Drive delete during message removal failed', driveErr?.message);
+        }
+      }
 
       await axios.delete(`${API_URL}/api/messages/${messageId}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -673,6 +829,13 @@ export default function ChatInterface() {
     }
 
     try {
+      clearCachedMek(user?.id);
+      clearCachedSalt(user?.id);
+    } catch (err) {
+      console.warn('Failed to clear cached key on sign-out', err?.message);
+    }
+
+    try {
       revokeToken();
       clearStoredToken();
     } catch (err) {
@@ -680,9 +843,30 @@ export default function ChatInterface() {
     }
 
     try {
-      localStorage.removeItem('drivechat_prechat_passed');
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('drivechat_')) localStorage.removeItem(key);
+      }
     } catch (err) {
-      console.warn('Failed to clear prechat flag on sign-out', err?.message);
+      console.warn('Failed to clear drivechat localStorage keys on sign-out', err?.message);
+    }
+
+    try {
+      clearCurrentDevice();
+    } catch (err) {
+      console.warn('Failed to clear device info on sign-out', err?.message);
+    }
+
+    try {
+      sessionStorage.clear();
+    } catch (err) {
+      console.warn('Failed to clear sessionStorage on sign-out', err?.message);
+    }
+
+    try {
+      await deleteDb();
+    } catch (err) {
+      console.warn('Failed to delete Dexie database on sign-out', err?.message);
     }
 
     await signOut();
@@ -792,22 +976,6 @@ export default function ChatInterface() {
     closeContextMenu();
   };
 
-  const timelineItems = useMemo(() => {
-    const items = [];
-    let lastDate = null;
-
-    messages.forEach((message) => {
-      const dateKey = dayjs(message.timestamp).format('YYYY-MM-DD');
-      if (dateKey !== lastDate) {
-        items.push({ type: 'separator', date: dateKey });
-        lastDate = dateKey;
-      }
-      items.push({ type: 'message', message });
-    });
-
-    return items;
-  }, [messages]);
-
   // Helper to get Drive URL for display (files are public via "anyone with link")
   const getFileDisplayUrl = useCallback((fileId) => {
     return getDriveContentUrl(fileId);
@@ -821,13 +989,30 @@ export default function ChatInterface() {
   const handleEditMessage = async () => {
     if (!editText.trim() || !editingMessage) return;
 
+    if (!mek) {
+      setEncryptionError('Encryption key missing. Return to PreChat to unlock.');
+      return;
+    }
+
     try {
       const token = await getToken();
       if (!token) return;
 
+      const target = messages.find((m) => m.id === editingMessage);
+      if (!target) return;
+
+      const { envelope, encryption } = await encryptPayload({
+        type: target.type,
+        text: editText.trim(),
+        linkUrl: target.linkUrl || null,
+        linkTitle: target.linkTitle || null,
+        linkDescription: target.linkDescription || null,
+        linkImage: target.linkImage || null,
+      });
+
       await axios.patch(
         `${API_URL}/api/messages/${editingMessage}`,
-        { text: editText.trim() },
+        { ciphertext: envelope.ciphertext, encryption },
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
@@ -958,92 +1143,36 @@ export default function ChatInterface() {
     }
   }, [contextMenu]);
 
+  if (!encryptionReady) {
+    return (
+      <EncryptionGate
+        ready={encryptionReady}
+        error={encryptionError}
+        onReenter={() => navigate('/prechat', { replace: false })}
+        onHome={() => navigate('/', { replace: true })}
+      />
+    );
+  }
+
   if (authState.status === 'authorizing' || authState.status === 'error') {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 max-w-md w-full text-center space-y-4">
-          {authState.status === 'authorizing' ? (
-            <>
-              <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
-              <p className="text-white text-lg font-semibold">Connecting Google Drive...</p>
-              <p className="text-gray-400 text-sm">
-                Keep this window open while we complete Drive consent. The popup will close when
-                finished.
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="text-red-400 text-lg font-semibold">Drive access failed</p>
-              <p className="text-gray-300 text-sm whitespace-pre-wrap">{authState.message}</p>
-              <div className="flex gap-2 justify-center">
-                <button
-                  onClick={requestDriveAccess}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
-                >
-                  Retry
-                </button>
-                <button
-                  onClick={() => setAuthState({ status: 'idle', message: '' })}
-                  className="px-4 py-2 bg-gray-800 border border-gray-700 text-gray-200 rounded-lg"
-                >
-                  Cancel
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
+      <DriveAuthOverlay
+        status={authState.status}
+        message={authState.message}
+        onRetry={requestDriveAccess}
+        onCancel={() => setAuthState({ status: 'idle', message: '' })}
+      />
     );
   }
 
   return (
     <div className="h-screen bg-gray-950 flex overflow-hidden">
-      {confirmDelete && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-sm shadow-xl text-center space-y-4">
-            <p className="text-white text-lg font-semibold">Delete this message?</p>
-            <p className="text-gray-300 text-sm">
-              This will remove the message and its file (if any) from DriveChat.
-            </p>
-            <div className="flex gap-2 justify-center">
-              <button
-                onClick={() => performDelete(confirmDelete.id)}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg"
-              >
-                Delete
-              </button>
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="px-4 py-2 bg-gray-800 border border-gray-700 text-gray-200 rounded-lg"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {showDrivePrompt && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 w-full max-w-md shadow-xl">
-            <h3 className="text-white text-lg font-semibold mb-2">Connect Google Drive</h3>
-            <p className="text-gray-300 text-sm mb-4">
-              DriveChat needs Drive access to upload and delete your files. Click below to grant
-              access. This should appear once right after sign-in.
-            </p>
-            <div className="space-y-3">
-              <button
-                onClick={requestDriveAccess}
-                className="w-full py-2 px-4 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg transition-colors"
-              >
-                Grant Drive Access
-              </button>
-              <p className="text-xs text-gray-400 text-center">
-                If a popup is blocked or auto-closed, allow popups for this site and try again.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      <DeleteConfirmModal
+        confirmDelete={confirmDelete}
+        onConfirm={() => performDelete(confirmDelete)}
+        onCancel={() => setConfirmDelete(null)}
+      />
+      <DrivePromptModal visible={showDrivePrompt} onRequestAccess={requestDriveAccess} />
       <ChatSidebar
         user={user}
         session={session}
@@ -1069,84 +1198,32 @@ export default function ChatInterface() {
 
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {isLoadingMessages ? (
-            <div className="space-y-4 animate-fade-in">
-              <div className="flex gap-3 items-start">
-                <Skeleton className="h-9 w-9 rounded-full" />
-                <div className="flex-1 space-y-3">
-                  <Skeleton className="h-4 w-1/3" />
-                  <Skeleton className="h-16 w-full" />
-                </div>
-              </div>
-              <div className="flex gap-3 items-start justify-end">
-                <div className="flex-1 space-y-3">
-                  <Skeleton className="h-4 w-1/4 ml-auto" />
-                  <Skeleton className="h-16 w-full" />
-                </div>
-                <Skeleton className="h-9 w-9 rounded-full" />
-              </div>
-              {[...Array(3)].map((_, idx) => (
-                <div key={`chat-skel-${idx}`} className="flex gap-3 items-start">
-                  <Skeleton className="h-9 w-9 rounded-full" />
-                  <div className="flex-1 space-y-2">
-                    <Skeleton className="h-4 w-1/2" />
-                    <Skeleton className="h-12 w-full" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <>
-              <PendingUploadBanner pendingUpload={pendingUpload} formatBytes={formatBytes} />
-              {messages.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-gray-500">
-                  <div className="text-center">
-                    <p className="text-lg mb-2">
-                      {showStarredOnly ? 'No starred messages' : 'No messages yet'}
-                    </p>
-                    <p className="text-sm">
-                      {showStarredOnly
-                        ? 'Star messages to see them here'
-                        : 'Send your first message below'}
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                timelineItems.map((item) =>
-                  item.type === 'separator' ? (
-                    <div key={`separator-${item.date}`} className="flex justify-center">
-                      <span className="px-4 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-400 bg-gray-900/70 border border-gray-800 rounded-full shadow-sm">
-                        {getDayLabel(item.date)}
-                      </span>
-                    </div>
-                  ) : (
-                    <MessageItem
-                      key={item.message.id}
-                      message={item.message}
-                      currentDevice={currentDevice}
-                      editingMessage={editingMessage}
-                      editText={editText}
-                      setEditText={setEditText}
-                      setEditingMessage={setEditingMessage}
-                      handleEditMessage={handleEditMessage}
-                      handleContextMenu={handleContextMenu}
-                      handleDownloadFile={handleDownloadFile}
-                      toggleStar={toggleStar}
-                      setConfirmDelete={setConfirmDelete}
-                      closeContextMenu={closeContextMenu}
-                      formatBytes={formatBytes}
-                      downloadState={downloadStates[item.message.id]}
-                      deleteError={deleteErrors[item.message.id]}
-                      getFileDisplayUrl={getFileDisplayUrl}
-                      getThumbnailUrl={getThumbnailUrl}
-                      getFileIcon={getFileIcon}
-                    />
-                  )
-                )
-              )}
-              <div ref={messagesEndRef} />
-            </>
-          )}
+          <ChatBody
+            messages={messages}
+            isLoading={isLoadingMessages}
+            showStarredOnly={showStarredOnly}
+            pendingUpload={pendingUpload}
+            formatBytes={formatBytes}
+            handlePauseUpload={handlePauseUpload}
+            handleCancelUpload={handleCancelUpload}
+            currentDevice={currentDevice}
+            editingMessage={editingMessage}
+            editText={editText}
+            setEditText={setEditText}
+            setEditingMessage={setEditingMessage}
+            handleEditMessage={handleEditMessage}
+            handleContextMenu={handleContextMenu}
+            handleDownloadFile={handleDownloadFile}
+            toggleStar={toggleStar}
+            setConfirmDelete={setConfirmDelete}
+            closeContextMenu={closeContextMenu}
+            downloadStates={downloadStates}
+            deleteErrors={deleteErrors}
+            getFileDisplayUrl={getFileDisplayUrl}
+            getThumbnailUrl={getThumbnailUrl}
+            getFileIcon={getFileIcon}
+          />
+          <div ref={messagesEndRef} />
         </div>
 
         <MessageContextMenu

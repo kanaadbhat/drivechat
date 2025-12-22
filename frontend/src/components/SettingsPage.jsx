@@ -18,6 +18,8 @@ import {
   getAccessToken,
   hasValidToken,
   getDriveFolderUsage,
+  revokeToken,
+  clearStoredToken,
 } from '../utils/gisClient.js';
 import {
   getCurrentDevice,
@@ -27,12 +29,15 @@ import {
   getDeviceIcon,
   DEVICE_TYPES,
 } from '../utils/deviceManager';
+import { clearCurrentDevice } from '../utils/deviceManager';
 import Skeleton from './ui/Skeleton';
+import { clearCachedMek, clearCachedSalt } from '../utils/crypto';
+import { clearAllUserData, deleteDb } from '../db/dexie';
 
 const API_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
 export default function SettingsPage() {
-  const { getToken } = useAuth();
+  const { getToken, signOut } = useAuth();
   const { user } = useUser();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -308,6 +313,52 @@ export default function SettingsPage() {
 
       // Sign out and redirect to home
       alert('Your account has been permanently deleted.');
+      try {
+        clearCachedMek(user?.id);
+        clearCachedSalt(user?.id);
+        await clearAllUserData(user?.id);
+        await deleteDb();
+        // Clear prechat flag and any other drivechat_ localStorage keys
+        try {
+          for (let i = localStorage.length - 1; i >= 0; i--) {
+            const key = localStorage.key(i);
+            if (!key) continue;
+            if (key.startsWith('drivechat_')) localStorage.removeItem(key);
+          }
+        } catch (lsErr) {
+          console.warn('Failed to clear drivechat localStorage keys', lsErr?.message);
+        }
+
+        // Clear any GIS token state and device info
+        try {
+          revokeToken();
+          clearStoredToken();
+        } catch (gisErr) {
+          console.warn('Failed to clear GIS tokens', gisErr?.message);
+        }
+
+        try {
+          clearCurrentDevice();
+        } catch (devErr) {
+          console.warn('Failed to clear device info', devErr?.message);
+        }
+
+        // Clear sessionStorage as well
+        try {
+          sessionStorage.clear();
+        } catch (ssErr) {
+          console.warn('Failed to clear sessionStorage', ssErr?.message);
+        }
+      } catch (cacheErr) {
+        console.warn('Failed to clear cached encryption data', cacheErr?.message);
+      }
+
+      try {
+        await signOut();
+      } catch (signErr) {
+        console.warn('signOut failed, redirecting anyway', signErr?.message);
+      }
+
       window.location.href = '/';
     } catch (error) {
       console.error('Error deleting account:', error);

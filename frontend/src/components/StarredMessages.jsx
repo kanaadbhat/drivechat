@@ -1,73 +1,32 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import {
-  Star,
-  ArrowLeft,
   FileText,
   Image as ImageIcon,
   File,
   Video,
   Music,
   Archive,
-  Trash2,
-  LayoutGrid,
-  List,
   ExternalLink,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import dayjs from 'dayjs';
-import FilePreview from './FilePreview';
-import { getDriveContentUrl, getDriveThumbnailUrl } from '../utils/gisClient';
-import Skeleton from './ui/Skeleton';
 import { loadMessages, upsertMessage } from '../db/dexie';
 import { initializeDevice } from '../utils/deviceManager';
 import { createRealtimeClient } from '../utils/realtimeClient';
-
-const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)/gi;
-
-const renderTextWithLinks = (text = '') => {
-  const parts = text.split(urlRegex);
-  return parts.map((part, idx) => {
-    if (!part) return null;
-    const isUrl = urlRegex.test(part);
-    urlRegex.lastIndex = 0;
-    if (isUrl) {
-      const href = part.startsWith('http') ? part : `https://${part}`;
-      return (
-        <a
-          key={`link-${idx}`}
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline text-blue-200 hover:text-white break-words"
-        >
-          {part}
-        </a>
-      );
-    }
-    return (
-      <span key={`text-${idx}`} className="break-words">
-        {part}
-      </span>
-    );
-  });
-};
-
-const containsUrl = (text = '') => {
-  if (!text) return false;
-  urlRegex.lastIndex = 0;
-  return urlRegex.test(text);
-};
-
-const extractFirstUrl = (text = '') => {
-  const regex = /(https?:\/\/[^^\s]+)|(www\.[^\s]+)/i;
-  const match = text?.match(regex);
-  return match ? match[0] : null;
-};
+import { decryptJson, loadCachedMek } from '../utils/crypto';
+import { containsUrl, extractFirstUrl, getHostname } from '../utils/messageUtils';
+import { useUserChangeGuard } from '../hooks/useUserChangeGuard';
+import StarredHeader from './starred/StarredHeader';
+import FileTypeFilter from './starred/FileTypeFilter';
+import StarredCard from './starred/StarredCard';
+import StarredListRow from './starred/StarredListRow';
+import StarredSkeletons from './starred/StarredSkeletons';
+import StarredEmpty from './starred/StarredEmpty';
 
 const API_URL =
   import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+const PRECHAT_KEY = 'drivechat_prechat_passed';
 
 const fileTypes = [
   { id: 'all', label: 'All Files', icon: File },
@@ -99,24 +58,88 @@ export default function StarredMessages() {
   const [viewMode, setViewMode] = useState('grid'); // grid | list
   const [syncing, setSyncing] = useState(false);
   const [currentDevice, setCurrentDevice] = useState(null);
+  const [mek, setMek] = useState(null);
+  const [encryptionError, setEncryptionError] = useState('');
+  const [decrypting, setDecrypting] = useState(true);
   const realtimeRef = useRef(null);
   const fetchedOnceRef = useRef(false);
 
-  const formatBytes = (bytes = 0, decimals = 1) => {
-    if (!bytes) return '0 B';
-    const k = 1024;
-    const dm = decimals < 0 ? 0 : decimals;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-  };
+  useUserChangeGuard(user?.id);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const prechatPassed = localStorage.getItem(PRECHAT_KEY);
+    if (!prechatPassed) {
+      console.info('[StarredMessages] redirecting to prechat because key missing');
+      navigate('/prechat', { state: { redirect: '/starred' } });
+    }
+  }, [user?.id, navigate]);
+
+  const decryptMessages = useCallback(
+    async (messages = []) => {
+      if (!mek) {
+        setDecrypting(false);
+        setEncryptionError('Encryption key missing. Open PreChat to unlock starred items.');
+        return [];
+      }
+      setDecrypting(true);
+      const results = await Promise.all(
+        messages.map(async (message) => {
+          if (!message) return message;
+          if (!message.ciphertext && !message.fileCiphertext) return message;
+          try {
+            if (message.type === 'file' && message.fileCiphertext) {
+              const payload = await decryptJson(mek, {
+                ciphertext: message.fileCiphertext,
+                iv: message.encryption?.iv,
+              });
+              return {
+                ...message,
+                ...payload,
+                fileId: payload?.fileId,
+                fileName: payload?.fileName,
+                fileSize: payload?.fileSize,
+                mimeType: payload?.mimeType,
+                fileCategory: payload?.fileCategory,
+                filePreviewUrl: payload?.filePreviewUrl,
+              };
+            }
+
+            if (message.ciphertext) {
+              const payload = await decryptJson(mek, {
+                ciphertext: message.ciphertext,
+                iv: message.encryption?.iv,
+              });
+              return { ...message, ...payload };
+            }
+          } catch (err) {
+            console.warn('[StarredMessages] decrypt failed', err?.message);
+            return { ...message, decryptionError: err?.message || 'Decrypt failed' };
+          }
+          return message;
+        })
+      );
+      setDecrypting(false);
+      return results;
+    },
+    [mek]
+  );
 
   const loadCached = useCallback(async () => {
     if (!user?.id) return;
+    if (!mek) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     const cached = await loadMessages(user.id, 1000);
+    console.info('[StarredMessages] loaded cached', { count: cached.length });
     const starred = cached.filter((m) => m.starred);
-    setStarredMessages(starred);
-  }, [user?.id]);
+    console.info('[StarredMessages] cached starred', { count: starred.length });
+    const decrypted = await decryptMessages(starred);
+    setStarredMessages(decrypted);
+    setLoading(false);
+  }, [user?.id, decryptMessages]);
 
   useEffect(() => {
     loadCached();
@@ -127,6 +150,18 @@ export default function StarredMessages() {
     const device = initializeDevice();
     setCurrentDevice(device);
   }, []);
+
+  // Load cached MEK for decryption
+  useEffect(() => {
+    if (!user?.id) return;
+    const cached = loadCachedMek(user.id);
+    if (cached) {
+      setMek(cached);
+      setEncryptionError('');
+    } else {
+      setEncryptionError('Encryption key missing. Open PreChat to unlock starred items.');
+    }
+  }, [user?.id]);
 
   const fetchStarredMessages = useCallback(async () => {
     try {
@@ -139,9 +174,22 @@ export default function StarredMessages() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const messages = response.data.messages || [];
-      setStarredMessages(messages);
+      console.info('[StarredMessages] fetch response', { count: messages.length });
+      const decrypted = await decryptMessages(messages);
+      setStarredMessages(decrypted);
       if (user?.id) {
-        for (const msg of messages) {
+        const cached = await loadMessages(user.id, 2000);
+        const fetchedIds = new Set(decrypted.map((m) => m.id));
+        const staleStarred = (cached || []).filter((m) => m.starred && !fetchedIds.has(m.id));
+        if (staleStarred.length) {
+          console.info('[StarredMessages] clearing stale starred entries', {
+            staleCount: staleStarred.length,
+          });
+          for (const stale of staleStarred) {
+            await upsertMessage(user.id, { ...stale, starred: false });
+          }
+        }
+        for (const msg of decrypted) {
           await upsertMessage(user.id, msg);
         }
       }
@@ -151,7 +199,7 @@ export default function StarredMessages() {
       setLoading(false);
       setSyncing(false);
     }
-  }, [getToken, user?.id]);
+  }, [getToken, user?.id, decryptMessages]);
 
   // Realtime starred sync
   useEffect(() => {
@@ -174,18 +222,20 @@ export default function StarredMessages() {
             if (event.type === 'message.created' || event.type === 'message.updated') {
               const msg = event.message;
               if (!msg?.id) return;
-              if (msg.starred) {
+              const decrypted = await decryptMessages([msg]);
+              const finalMsg = decrypted?.[0] || msg;
+              if (finalMsg.starred) {
                 setStarredMessages((prev) => {
-                  const exists = prev.some((m) => m.id === msg.id);
+                  const exists = prev.some((m) => m.id === finalMsg.id);
                   const next = exists
-                    ? prev.map((m) => (m.id === msg.id ? { ...m, ...msg } : m))
-                    : [...prev, msg];
+                    ? prev.map((m) => (m.id === finalMsg.id ? { ...m, ...finalMsg } : m))
+                    : [...prev, finalMsg];
                   return next.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
                 });
-                if (user?.id) await upsertMessage(user.id, msg);
+                if (user?.id) await upsertMessage(user.id, finalMsg);
               } else {
-                setStarredMessages((prev) => prev.filter((m) => m.id !== msg.id));
-                if (user?.id) await upsertMessage(user.id, msg);
+                setStarredMessages((prev) => prev.filter((m) => m.id !== finalMsg.id));
+                if (user?.id) await upsertMessage(user.id, finalMsg);
               }
               return;
             }
@@ -244,6 +294,30 @@ export default function StarredMessages() {
     run();
   }, [user?.id, fetchStarredMessages]);
 
+  // If MEK arrives later and we have no starred loaded, refetch to avoid showing encrypted noise
+  useEffect(() => {
+    const run = async () => {
+      if (!mek) return;
+      if (!user?.id) return;
+      if (starredMessages.length) return;
+      await fetchStarredMessages();
+    };
+    run();
+  }, [mek, user?.id, starredMessages.length, fetchStarredMessages]);
+
+  // Re-decrypt starred messages once a MEK arrives
+  useEffect(() => {
+    const run = async () => {
+      if (!mek) return;
+      if (!starredMessages.length) return;
+      setLoading(true);
+      const decrypted = await decryptMessages(starredMessages);
+      setStarredMessages(decrypted);
+      setLoading(false);
+    };
+    run();
+  }, [mek]);
+
   const unstarMessage = async (messageId) => {
     try {
       const token = await getToken();
@@ -271,38 +345,6 @@ export default function StarredMessages() {
     }
   };
 
-  const getFileExtension = (filename) => {
-    return filename?.split('.').pop()?.toLowerCase() || '';
-  };
-
-  const getHostname = (url = '') => {
-    try {
-      const u = new URL(url.startsWith('http') ? url : `https://${url}`);
-      return u.hostname.replace(/^www\./, '');
-    } catch (e) {
-      return url;
-    }
-  };
-
-  const getFileIcon = (filename) => {
-    if (!filename) return <File className="w-5 h-5" />;
-    const ext = getFileExtension(filename);
-
-    const type = fileTypes.find((t) => t.extensions?.includes(ext));
-    const Icon = type?.icon || File;
-    return <Icon className="w-5 h-5" />;
-  };
-
-  const getFileColor = (filename) => {
-    const ext = getFileExtension(filename);
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) return 'text-green-400';
-    if (['pdf', 'doc', 'docx', 'txt'].includes(ext)) return 'text-blue-400';
-    if (['mp4', 'mov', 'avi'].includes(ext)) return 'text-purple-400';
-    if (['mp3', 'wav'].includes(ext)) return 'text-pink-400';
-    if (['zip', 'rar', '7z'].includes(ext)) return 'text-yellow-400';
-    return 'text-gray-400';
-  };
-
   const filteredMessages = starredMessages.filter((message) => {
     if (selectedType === 'all') return true;
     if (selectedType === 'links') {
@@ -311,7 +353,7 @@ export default function StarredMessages() {
     }
     if (message.type !== 'file' || !message.fileName) return false;
 
-    const ext = getFileExtension(message.fileName);
+    const ext = message.fileName?.split('.').pop()?.toLowerCase() || '';
     const type = fileTypes.find((t) => t.id === selectedType);
     return type?.extensions?.includes(ext);
   });
@@ -321,307 +363,37 @@ export default function StarredMessages() {
     [filteredMessages]
   );
 
-  const renderFilePreview = (message) => (
-    <div className="w-full rounded-md overflow-hidden bg-gray-900/60 border border-gray-800">
-      <FilePreview
-        message={message}
-        getFileUrl={(fileId) => getDriveContentUrl(fileId)}
-        getThumbnailUrl={(fileId, size = 400) => getDriveThumbnailUrl(fileId, size)}
-        variant="compact"
-      />
-    </div>
-  );
-
-  const renderCard = (message) => (
-    <div
-      className="bg-gray-900 border border-gray-800 rounded-lg p-3 hover:border-gray-700 transition-colors group shadow-sm"
-      onDoubleClick={() =>
-        message.fileId &&
-        window.open(`https://drive.google.com/file/d/${message.fileId}/view`, '_blank')
-      }
-    >
-      <div className="flex items-start justify-between mb-3">
-        <div className={`${getFileColor(message.fileName)}`}>{getFileIcon(message.fileName)}</div>
-        <button
-          onClick={() => unstarMessage(message.id)}
-          className="opacity-0 group-hover:opacity-100 transition-opacity text-yellow-400 hover:text-yellow-500"
-          title="Unstar"
-        >
-          <Star className="w-4 h-4 fill-current" />
-        </button>
-      </div>
-
-      {message.type === 'file' && renderFilePreview(message)}
-      {(message.type === 'link' || (message.type === 'text' && containsUrl(message.text))) &&
-        (message.linkUrl || extractFirstUrl(message.text)) &&
-        (() => {
-          const link = message.linkUrl || extractFirstUrl(message.text);
-          const hostname = getHostname(link || '');
-          return (
-            <a
-              href={link}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block rounded-lg overflow-hidden border border-gray-800 hover:border-gray-700 transition-colors bg-black/20"
-            >
-              <div className="flex items-stretch">
-                {message.linkImage || hostname ? (
-                  <img
-                    src={
-                      message.linkImage ||
-                      `https://www.google.com/s2/favicons?sz=128&domain=${hostname}`
-                    }
-                    alt={message.linkTitle || link}
-                    className="w-36 h-24 object-cover flex-shrink-0"
-                    loading="lazy"
-                  />
-                ) : (
-                  <div className="w-36 h-24 flex-shrink-0 bg-gray-800 flex items-center justify-center text-gray-400">
-                    <ExternalLink className="w-5 h-5" />
-                  </div>
-                )}
-                <div className="p-3 space-y-1 min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-white line-clamp-2 break-words">
-                    {message.linkTitle || hostname}
-                  </p>
-                  {message.linkDescription && (
-                    <p className="text-xs text-gray-300 line-clamp-2 leading-snug">
-                      {message.linkDescription}
-                    </p>
-                  )}
-                  <p className="text-xs text-blue-200 underline break-all leading-snug">{link}</p>
-                </div>
-              </div>
-            </a>
-          );
-        })()}
-      {message.type === 'text' && message.text && (
-        <p className="text-gray-300 text-sm mb-2 line-clamp-3 leading-snug">
-          {renderTextWithLinks(message.text)}
-        </p>
-      )}
-
-      {message.type === 'file' && message.fileName && (
-        <div className="mt-2 space-y-1">
-          <p className="text-white font-medium text-sm truncate">{message.fileName}</p>
-          <p className="text-gray-500 text-xs">
-            {message.fileSize ? formatBytes(message.fileSize) : 'Unknown size'}
-          </p>
-        </div>
-      )}
-
-      <div className="flex items-center justify-between pt-3 mt-3 border-t border-gray-800 text-xs text-gray-500">
-        <span>{dayjs(message.timestamp).fromNow()}</span>
-        <div className="flex gap-2">
-          {message.type === 'file' && (
-            <a
-              href={message.filePreviewUrl || getDriveContentUrl(message.fileId)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-1.5 hover:bg-gray-800 rounded text-gray-400 hover:text-white transition-colors"
-              title="Open"
-            >
-              <ExternalLink className="w-4 h-4" />
-            </a>
-          )}
-          <button
-            onClick={() => unstarMessage(message.id)}
-            className="p-1.5 hover:bg-gray-800 rounded text-gray-400 hover:text-red-400 transition-colors"
-            title="Unstar"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderListRow = (message) => (
-    <div
-      key={message.id}
-      className="grid grid-cols-12 gap-3 items-center px-3 py-2 hover:bg-gray-900/70 rounded-lg border border-transparent hover:border-gray-800 transition-colors text-sm"
-      onDoubleClick={() =>
-        message.fileId &&
-        window.open(`https://drive.google.com/file/d/${message.fileId}/view`, '_blank')
-      }
-    >
-      <div className="col-span-5 flex items-center gap-3">
-        <div className="w-16 h-16 bg-gray-900 border border-gray-800 rounded-lg flex items-center justify-center overflow-hidden">
-          {message.type === 'file' ? (
-            renderFilePreview(message)
-          ) : message.type === 'link' || (message.type === 'text' && containsUrl(message.text)) ? (
-            (() => {
-              const linkForRow = message.linkUrl || extractFirstUrl(message.text);
-              return (
-                <a
-                  href={linkForRow}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-300 px-2 text-center underline truncate"
-                >
-                  {linkForRow}
-                </a>
-              );
-            })()
-          ) : (
-            <div className="text-xs text-gray-400 px-2 text-center">Text</div>
-          )}
-        </div>
-        <div className="min-w-0">
-          <p className="text-white font-medium truncate leading-tight">
-            {message.fileName || message.text}
-          </p>
-          <p className="text-xs text-gray-500 truncate">
-            {dayjs(message.timestamp).format('MMM D, YYYY h:mm A')}
-          </p>
-        </div>
-      </div>
-      <div className="col-span-2 text-gray-300 truncate">
-        {message.type === 'file'
-          ? getFileExtension(message.fileName) || 'file'
-          : message.type === 'link'
-            ? 'link'
-            : 'text'}
-      </div>
-      <div className="col-span-2 text-gray-300 truncate">
-        {message.type === 'file'
-          ? message.fileSize
-            ? formatBytes(message.fileSize)
-            : 'Unknown'
-          : message.type === 'link' || (message.type === 'text' && containsUrl(message.text))
-            ? getHostname(message.linkUrl || extractFirstUrl(message.text))
-            : '—'}
-      </div>
-      <div className="col-span-3 flex justify-end gap-2 text-sm">
-        {(message.type === 'file' ||
-          message.type === 'link' ||
-          (message.type === 'text' && containsUrl(message.text))) && (
-          <a
-            href={
-              message.type === 'file'
-                ? message.filePreviewUrl || getDriveContentUrl(message.fileId)
-                : message.linkUrl || extractFirstUrl(message.text)
-            }
-            target="_blank"
-            rel="noopener noreferrer"
-            className="px-2 py-1 rounded bg-gray-800 text-gray-200 hover:bg-gray-700 transition-colors"
-            title="Open"
-          >
-            Open
-          </a>
-        )}
-        <button
-          onClick={() => unstarMessage(message.id)}
-          className="px-2 py-1 rounded bg-gray-800 text-red-300 hover:bg-gray-700 transition-colors"
-          title="Unstar"
-        >
-          Unstar
-        </button>
-      </div>
-    </div>
-  );
-
   return (
     <div className="min-h-screen bg-gray-950">
       {/* Header */}
       <div className="bg-gray-900 border-b border-gray-800 sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center gap-4 mb-4">
-            <button
-              onClick={() => navigate('/chat')}
-              className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-400 hover:text-white"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <div className="flex-1 min-w-0">
-              <h1 className="text-2xl font-bold text-white">Starred Messages</h1>
-              <p className="text-sm text-gray-400">
-                {filteredMessages.length} items{syncing ? ' · refreshing…' : ''}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setViewMode('grid')}
-                className={`p-2 rounded-lg border ${
-                  viewMode === 'grid'
-                    ? 'border-blue-500 text-blue-400 bg-blue-500/10'
-                    : 'border-gray-800 text-gray-400 hover:text-white hover:border-gray-700'
-                }`}
-                title="Grid view"
-              >
-                <LayoutGrid className="w-5 h-5" />
-              </button>
-              <button
-                onClick={() => setViewMode('list')}
-                className={`p-2 rounded-lg border ${
-                  viewMode === 'list'
-                    ? 'border-blue-500 text-blue-400 bg-blue-500/10'
-                    : 'border-gray-800 text-gray-400 hover:text-white hover:border-gray-700'
-                }`}
-                title="List view"
-              >
-                <List className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-
-          {/* File Type Filter */}
-          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-            {fileTypes.map((type) => {
-              const Icon = type.icon;
-              return (
-                <button
-                  key={type.id}
-                  onClick={() => setSelectedType(type.id)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors ${
-                    selectedType === type.id
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  {type.label}
-                </button>
-              );
-            })}
-          </div>
+          <StarredHeader
+            count={filteredMessages.length}
+            syncing={syncing}
+            viewMode={viewMode}
+            onViewChange={setViewMode}
+            onBack={() => navigate('/chat')}
+          />
+          <FileTypeFilter
+            fileTypes={fileTypes}
+            selectedType={selectedType}
+            onSelect={setSelectedType}
+          />
         </div>
       </div>
 
       {/* Content */}
       <div className="container mx-auto px-4 py-6">
-        {loading ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {[...Array(6)].map((_, idx) => (
-              <div
-                key={`starred-skel-${idx}`}
-                className="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3 animate-fade-in"
-              >
-                <div className="flex items-center justify-between">
-                  <Skeleton className="h-4 w-24" />
-                  <Skeleton className="h-6 w-6 rounded" />
-                </div>
-                <Skeleton className="h-32 w-full rounded-lg" />
-                <div className="space-y-2">
-                  <Skeleton className="h-4 w-5/6" />
-                  <Skeleton className="h-3 w-2/3" />
-                </div>
-                <div className="flex items-center justify-between pt-2 border-t border-gray-800">
-                  <Skeleton className="h-3 w-16" />
-                  <div className="flex gap-2">
-                    <Skeleton className="h-8 w-16 rounded" />
-                    <Skeleton className="h-8 w-12 rounded" />
-                  </div>
-                </div>
-              </div>
-            ))}
+        {encryptionError && (
+          <div className="mb-4 p-3 rounded-lg border border-yellow-600 bg-yellow-500/10 text-yellow-200 text-sm">
+            {encryptionError}
           </div>
+        )}
+        {loading || decrypting ? (
+          <StarredSkeletons />
         ) : filteredMessages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-gray-500">
-            <Star className="w-16 h-16 mb-4 opacity-50" />
-            <p className="text-lg font-medium">No starred messages</p>
-            <p className="text-sm">Star important messages to keep them here</p>
-          </div>
+          <StarredEmpty />
         ) : viewMode === 'grid' ? (
           <div
             className="masonry w-full"
@@ -636,7 +408,7 @@ export default function StarredMessages() {
                 className="break-inside-avoid-column inline-block w-full mb-4"
                 style={{ width: '100%' }}
               >
-                {renderCard(message)}
+                <StarredCard message={message} fileTypes={fileTypes} onUnstar={unstarMessage} />
               </div>
             ))}
           </div>
@@ -648,7 +420,9 @@ export default function StarredMessages() {
               <span className="col-span-2">Size</span>
               <span className="col-span-3 text-right">Actions</span>
             </div>
-            {sortedMessages.map((message) => renderListRow(message))}
+            {sortedMessages.map((message) => (
+              <StarredListRow key={message.id} message={message} onUnstar={unstarMessage} />
+            ))}
           </div>
         )}
       </div>

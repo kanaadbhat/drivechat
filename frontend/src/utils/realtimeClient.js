@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client';
-import { getMeta, setMeta } from '../db/dexie';
+import { ensurePersistedLastSeenId, setPersistedLastSeenId } from './lastSeenManager';
 
 function safeJsonParse(value) {
   if (!value) return null;
@@ -18,8 +18,7 @@ export async function createRealtimeClient({
   onEvent,
   onStatus,
 }) {
-  const lastSeenId = await getMeta(userId, 'realtime:lastSeenId');
-  console.info('[realtimeClient] lastSeenId loaded', { userId, lastSeenId });
+  const lastSeenId = await ensurePersistedLastSeenId({ userId, apiUrl, getToken });
 
   const token = await getToken();
   if (!token) throw new Error('Missing auth token');
@@ -35,7 +34,6 @@ export async function createRealtimeClient({
   });
 
   socket.on('connect', () => {
-    console.info('[realtimeClient] socket connected', { userId, deviceId, id: socket.id });
     onStatus?.({ connected: true });
   });
 
@@ -49,8 +47,6 @@ export async function createRealtimeClient({
     onStatus?.({ connected: false, error: err?.message });
   });
 
-  socket.on('reconnect_attempt', (n) => console.info('[realtimeClient] reconnect attempt', n));
-
   socket.on('realtime:event', async (ev) => {
     const event = {
       ...ev,
@@ -58,24 +54,13 @@ export async function createRealtimeClient({
       patch: safeJsonParse(ev?.patch),
     };
 
-    console.info('[realtimeClient] received event', {
-      userId,
-      deviceId,
-      type: event.type,
-      streamId: event.streamId,
-    });
-
     try {
       await onEvent?.(event);
     } finally {
       if (event?.streamId) {
         try {
           socket.emit('ack', { streamId: event.streamId });
-          await setMeta(userId, 'realtime:lastSeenId', event.streamId);
-          console.info('[realtimeClient] acked and persisted lastSeenId', {
-            userId,
-            streamId: event.streamId,
-          });
+          await setPersistedLastSeenId(userId, event.streamId);
         } catch (ackErr) {
           console.warn('[realtimeClient] ack/persist failed', ackErr?.message);
         }

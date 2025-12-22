@@ -27,7 +27,6 @@ function loadStoredToken() {
     if (Date.now() < parsed.expiresAt) {
       currentAccessToken = parsed.accessToken;
       tokenExpiresAt = parsed.expiresAt;
-      console.info('[gisClient] Loaded token from localStorage');
     } else {
       localStorage.removeItem(STORAGE_KEY);
     }
@@ -86,7 +85,6 @@ export function initGisClient() {
       currentAccessToken = response.access_token;
       // expires_in is in seconds
       tokenExpiresAt = Date.now() + (response.expires_in - 60) * 1000;
-      console.info('[gisClient] Token acquired, expires at', new Date(tokenExpiresAt));
       persistToken();
       tokenPromiseResolve?.(currentAccessToken);
       tokenPromiseResolve = null;
@@ -100,7 +98,6 @@ export function initGisClient() {
     },
   });
 
-  console.info('[gisClient] Token client initialized');
   return true;
 }
 
@@ -154,7 +151,7 @@ export async function getAccessToken(options = {}) {
 export function revokeToken() {
   if (currentAccessToken) {
     window.google?.accounts?.oauth2?.revoke(currentAccessToken, () => {
-      console.info('[gisClient] Token revoked');
+      // Intentionally silent
     });
     currentAccessToken = null;
     tokenExpiresAt = 0;
@@ -242,7 +239,6 @@ async function getOrCreateAppFolder(accessToken) {
   }
 
   const createData = await createRes.json();
-  console.info('[gisClient] Created DriveChat folder:', createData.id);
   return createData.id;
 }
 
@@ -397,7 +393,6 @@ export async function deleteFileFromDrive(driveFileId) {
       throw new Error(`Drive delete failed: ${res.statusText}`);
     }
 
-    console.info('[gisClient] Deleted file:', driveFileId);
     return true;
   } catch (err) {
     console.error('[gisClient] Delete error:', err);

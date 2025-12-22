@@ -126,13 +126,17 @@ export function ImagePreview({
 }
 
 // Video preview - embeds Drive player
-export function VideoPreview({ message, getFileUrl, variant = 'default', onFallback }) {
+export function VideoPreview({ message, getFileUrl, variant = 'default', onFallback, shouldLoad }) {
   const { fileId, fileName, durationMs, mimeType } = message;
   const [previewUrl, setPreviewUrl] = useState('');
 
   useEffect(() => {
     let revokedUrl = '';
     let cancelled = false;
+    if (!shouldLoad) {
+      const resetId = setTimeout(() => setPreviewUrl(''), 0);
+      return () => clearTimeout(resetId);
+    }
     const load = async () => {
       if (!hasValidToken()) {
         console.info('[VideoPreview] Skipping preview; Drive token missing');
@@ -155,7 +159,7 @@ export function VideoPreview({ message, getFileUrl, variant = 'default', onFallb
       cancelled = true;
       if (revokedUrl) URL.revokeObjectURL(revokedUrl);
     };
-  }, [fileId, mimeType]);
+  }, [fileId, mimeType, shouldLoad]);
 
   const sizeClass = variant === 'compact' ? 'w-56 h-40' : 'w-64 h-48';
 
@@ -240,13 +244,17 @@ export function AudioPreview({ message, getFileUrl, variant = 'default', onFallb
 }
 
 // PDF preview - uses Drive embed
-export function PDFPreview({ message, variant = 'default', onFallback }) {
+export function PDFPreview({ message, variant = 'default', onFallback, shouldLoad }) {
   const { fileId, fileName, mimeType } = message;
   const [previewUrl, setPreviewUrl] = useState('');
 
   useEffect(() => {
     let revokedUrl = '';
     let cancelled = false;
+    if (!shouldLoad) {
+      const resetId = setTimeout(() => setPreviewUrl(''), 0);
+      return () => clearTimeout(resetId);
+    }
     const load = async () => {
       if (!hasValidToken()) {
         console.info('[PDFPreview] Skipping preview; Drive token missing');
@@ -269,7 +277,7 @@ export function PDFPreview({ message, variant = 'default', onFallback }) {
       cancelled = true;
       if (revokedUrl) URL.revokeObjectURL(revokedUrl);
     };
-  }, [fileId, mimeType]);
+  }, [fileId, mimeType, shouldLoad]);
 
   const sizeClass = variant === 'compact' ? 'w-full h-64' : 'w-64 h-80';
 
@@ -337,8 +345,41 @@ export function GenericFilePreview({ message, variant = 'default' }) {
 export default function FilePreview({ message, getFileUrl, getThumbnailUrl, variant = 'default' }) {
   const { mimeType, fileName } = message;
   const [useFallback, setUseFallback] = useState(false);
+  const isHeavyType =
+    mimeType?.startsWith('video/') ||
+    mimeType === 'application/pdf' ||
+    mimeType?.startsWith('audio/');
+  const [shouldLoad, setShouldLoad] = useState(!isHeavyType);
 
   const fallback = () => setUseFallback(true);
+
+  if (isHeavyType && !shouldLoad) {
+    return (
+      <div className="relative overflow-hidden rounded-lg bg-gray-800/70 border border-gray-700 p-4 space-y-3">
+        <div className="relative h-32 w-full overflow-hidden rounded-lg bg-gradient-to-br from-gray-800 via-gray-850 to-gray-900">
+          <div className="absolute inset-0 backdrop-blur-lg bg-white/5" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-2 px-4 py-3 rounded-2xl bg-gray-900/60 border border-white/15 shadow-lg shadow-black/30">
+              <button
+                className="px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-full"
+                onClick={() => setShouldLoad(true)}
+              >
+                Load preview
+              </button>
+              <span className="text-[11px] text-gray-200">
+                Preview on demand to save bandwidth.
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <p className="text-sm text-gray-100 font-semibold truncate" title={fileName}>
+            {fileName}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (useFallback) {
     return <GenericFilePreview message={message} variant={variant} />;
@@ -364,6 +405,7 @@ export default function FilePreview({ message, getFileUrl, getThumbnailUrl, vari
         getFileUrl={getFileUrl}
         variant={variant}
         onFallback={fallback}
+        shouldLoad={shouldLoad}
       />
     );
   }
@@ -375,12 +417,20 @@ export default function FilePreview({ message, getFileUrl, getThumbnailUrl, vari
         getFileUrl={getFileUrl}
         variant={variant}
         onFallback={fallback}
+        shouldLoad={shouldLoad}
       />
     );
   }
 
   if (mimeType === 'application/pdf') {
-    return <PDFPreview message={message} variant={variant} onFallback={fallback} />;
+    return (
+      <PDFPreview
+        message={message}
+        variant={variant}
+        onFallback={fallback}
+        shouldLoad={shouldLoad}
+      />
+    );
   }
 
   // Office documents

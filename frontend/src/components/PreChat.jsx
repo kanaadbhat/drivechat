@@ -20,11 +20,20 @@ import {
   loadCachedMek,
   loadCachedSalt,
 } from '../utils/crypto';
-import { getMeta, setMeta, resetDb } from '../db/dexie';
+import { ensurePersistedLastSeenId, setPersistedLastSeenId } from '../utils/lastSeenManager';
+import {
+  getMeta,
+  setMeta,
+  resetDb,
+  upsertMessage,
+  deleteMessage,
+  clearMessages,
+} from '../db/dexie';
 
 const API_URL =
   import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
-const PRECHAT_KEY = 'drivechat_prechat_passed';
+const PRECHAT_KEY_BASE = 'drivechat_prechat_passed';
+const buildPrechatKey = (userId) => `${PRECHAT_KEY_BASE}_${userId || 'anon'}`;
 const DB_OWNER_KEY = 'ownerUserId';
 
 export default function PreChat() {
@@ -32,7 +41,9 @@ export default function PreChat() {
   const location = useLocation();
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { user } = useUser();
-  const [status, setStatus] = useState('checking'); // checking | deleting | consenting | success | error
+  const userId = user?.id;
+  const primaryEmailAddress = user?.primaryEmailAddress?.emailAddress;
+  const [status, setStatus] = useState('checking'); // checking | deleting | consenting | syncing | success | error
   const [error, setError] = useState('');
   const [pendingCount, setPendingCount] = useState(null);
   const [encryptionSalt, setEncryptionSalt] = useState(null);
@@ -42,7 +53,6 @@ export default function PreChat() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [keyError, setKeyError] = useState('');
   const [isFirstSetup, setIsFirstSetup] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
   const redirectTo = location.state?.redirect || '/chat';
 
   const cachedSalt = useMemo(() => loadCachedSalt(user?.id || ''), [user?.id]);
@@ -50,14 +60,14 @@ export default function PreChat() {
 
   const ensureDriveAccess = useCallback(async () => {
     setStatus('consenting');
-    const loginHint = user?.primaryEmailAddress?.emailAddress;
+    const loginHint = primaryEmailAddress;
     const timeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('popup_closed_or_blocked')), 25000)
     );
 
     await Promise.race([getAccessToken({ prompt: 'consent', login_hint: loginHint }), timeout]);
     window?.focus?.();
-  }, [user?.primaryEmailAddress?.emailAddress]);
+  }, [primaryEmailAddress]);
 
   const syncPendingDeletions = useCallback(
     async (mekBytes) => {
@@ -174,42 +184,122 @@ export default function PreChat() {
     return null;
   }, [cachedSalt, fetchEncryptionSalt, user?.id]);
 
+  const decryptMessagePayload = useCallback(async (message, mekBytes) => {
+    if (!message) return message;
+    if (!message.ciphertext && !message.fileCiphertext) return message;
+    if (!mekBytes) return { ...message, decryptionError: 'missing-key' };
+
+    try {
+      if (message.type === 'file' && message.fileCiphertext) {
+        const payload = await decryptJson(mekBytes, {
+          ciphertext: message.fileCiphertext,
+          iv: message.encryption?.iv,
+        });
+        return {
+          ...message,
+          ...payload,
+          fileId: payload?.fileId,
+          fileName: payload?.fileName,
+          fileSize: payload?.fileSize,
+          mimeType: payload?.mimeType,
+          fileCategory: payload?.fileCategory,
+          filePreviewUrl: payload?.filePreviewUrl,
+        };
+      }
+
+      if (message.ciphertext) {
+        const payload = await decryptJson(mekBytes, {
+          ciphertext: message.ciphertext,
+          iv: message.encryption?.iv,
+        });
+        return { ...message, ...payload };
+      }
+    } catch (err) {
+      console.warn('[PreChat] decrypt failed', err?.message);
+      return { ...message, decryptionError: err?.message || 'Decrypt failed' };
+    }
+
+    return message;
+  }, []);
+
+  const syncMessagesWithBackend = useCallback(
+    async (mekBytes) => {
+      if (!userId) return;
+      if (!mekBytes) return;
+      setStatus('syncing');
+      const token = await getToken();
+      if (!token) throw new Error('Could not authenticate to sync messages.');
+
+      const lastSeenId = await ensurePersistedLastSeenId({ userId, apiUrl: API_URL, getToken });
+      const params = {};
+      if (lastSeenId) params.sinceId = lastSeenId;
+
+      // If we have no lastSeenId, treat this as a full fresh sync and wipe old cached messages
+      if (!lastSeenId) {
+        try {
+          await clearMessages(userId);
+        } catch (err) {
+          console.warn('[PreChat] failed to clear Dexie before full sync', err?.message);
+        }
+      }
+
+      let response;
+      try {
+        response = await axios.get(`${API_URL}/api/messages`, {
+          headers: { Authorization: `Bearer ${token}` },
+          params,
+        });
+      } catch (err) {
+        console.warn('[PreChat] delta fetch failed, retrying full sync', err?.message);
+        response = await axios.get(`${API_URL}/api/messages`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
+
+      const messages = response.data?.messages || [];
+      const deletedIds = response.data?.deletedIds || response.data?.deleted || [];
+      const nextLastSeen = response.data?.lastSeenId || null;
+
+      for (const msg of messages) {
+        const decrypted = await decryptMessagePayload(msg, mekBytes);
+        await upsertMessage(userId, decrypted);
+      }
+
+      for (const delId of deletedIds) {
+        await deleteMessage(userId, delId);
+      }
+
+      if (nextLastSeen) {
+        await setPersistedLastSeenId(userId, nextLastSeen);
+      }
+    },
+    [
+      deleteMessage,
+      decryptMessagePayload,
+      ensurePersistedLastSeenId,
+      getToken,
+      setPersistedLastSeenId,
+      upsertMessage,
+      userId,
+    ]
+  );
+
   // Verify Dexie belongs to this user; if not, reset to avoid stale data
   useEffect(() => {
     const verifyDbOwner = async () => {
-      if (!user?.id) return;
+      if (!userId) return;
       try {
         const owner = await getMeta('global', DB_OWNER_KEY);
-        if (owner && owner !== user.id) {
+        if (owner && owner !== userId) {
           await resetDb();
         }
-        await setMeta('global', DB_OWNER_KEY, user.id);
+        await setMeta('global', DB_OWNER_KEY, userId);
       } catch (err) {
         console.warn('[PreChat] Failed to verify db owner', err?.message);
       }
     };
     verifyDbOwner();
-  }, [user?.id]);
-
-  const handleReset = useCallback(async () => {
-    if (!confirm('Reset encryption? This clears the cached key and requires a new password.')) {
-      return;
-    }
-
-    try {
-      setIsResetting(true);
-      clearCachedMek(user?.id);
-      clearCachedSalt(user?.id);
-      localStorage.removeItem(PRECHAT_KEY);
-      setIsFirstSetup(true);
-      setPassword('');
-      setConfirmPassword('');
-      setError('');
-      setKeyError('');
-    } finally {
-      setIsResetting(false);
-    }
-  }, [user?.id]);
+  }, [userId]);
 
   const runPreChat = useCallback(async () => {
     setError('');
@@ -219,6 +309,10 @@ export default function PreChat() {
       if (!isSignedIn) {
         navigate('/signin', { replace: true });
         return;
+      }
+
+      if (!userId) {
+        return; // wait for user details before proceeding so stored key is scoped correctly
       }
 
       const keyResult = await ensureKey();
@@ -252,7 +346,9 @@ export default function PreChat() {
         );
       }
 
-      localStorage.setItem(PRECHAT_KEY, String(Date.now()));
+      await syncMessagesWithBackend(mekBytes);
+
+      localStorage.setItem(buildPrechatKey(userId), String(Date.now()));
       setStatus('success');
       navigate(redirectTo, { replace: true });
     } catch (err) {
@@ -262,7 +358,9 @@ export default function PreChat() {
           : err?.message || 'Drive access failed. Please retry.';
       setError(msg);
       setStatus('error');
-      localStorage.removeItem(PRECHAT_KEY);
+      if (userId) {
+        localStorage.removeItem(buildPrechatKey(userId));
+      }
       if (pendingCount && pendingCount > 0) {
         navigate('/', { replace: true });
       }
@@ -272,9 +370,11 @@ export default function PreChat() {
     ensureKey,
     isSignedIn,
     navigate,
-    syncPendingDeletions,
     redirectTo,
     pendingCount,
+    syncMessagesWithBackend,
+    syncPendingDeletions,
+    userId,
   ]);
 
   useEffect(() => {
@@ -332,12 +432,17 @@ export default function PreChat() {
             ? pendingCount === 0
               ? 'No pending deletions found. Moving ahead.'
               : `Cleaning up ${pendingCount} pending deletion${pendingCount === 1 ? '' : 's'}...`
-            : error || '';
+            : status === 'syncing'
+              ? 'Syncing your messages and cleanup state to this device.'
+              : error || '';
 
   return (
     <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8 max-w-xl w-full text-center space-y-5 shadow-2xl">
-        {(status === 'checking' || status === 'consenting' || status === 'deleting') && (
+        {(status === 'checking' ||
+          status === 'consenting' ||
+          status === 'deleting' ||
+          status === 'syncing') && (
           <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
         )}
         {status === 'error' && (
@@ -368,6 +473,12 @@ export default function PreChat() {
             >
               <span className="mt-1 h-2 w-2 rounded-full bg-indigo-400" />
               Requesting Google Drive consent if needed (popups may appear).
+            </li>
+            <li
+              className={`flex items-start gap-2 ${status === 'syncing' || status === 'success' ? 'text-gray-200' : 'text-gray-400'}`}
+            >
+              <span className="mt-1 h-2 w-2 rounded-full bg-amber-400" />
+              Syncing messages and applying changes to this device.
             </li>
           </ul>
         </div>
@@ -433,23 +544,12 @@ export default function PreChat() {
               </p>
               {keyError && <p className="text-xs text-red-400">{keyError}</p>}
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="submit"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50"
-                disabled={isResetting}
-              >
-                Continue
-              </button>
-              <button
-                type="button"
-                onClick={handleReset}
-                className="px-3 py-2 bg-gray-800 border border-gray-700 text-gray-200 rounded-lg text-sm"
-                disabled={isResetting}
-              >
-                Reset key
-              </button>
-            </div>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg"
+            >
+              Continue
+            </button>
           </form>
         )}
 

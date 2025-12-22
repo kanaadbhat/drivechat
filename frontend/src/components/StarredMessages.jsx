@@ -26,7 +26,8 @@ import StarredEmpty from './starred/StarredEmpty';
 
 const API_URL =
   import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
-const PRECHAT_KEY = 'drivechat_prechat_passed';
+const PRECHAT_KEY_BASE = 'drivechat_prechat_passed';
+const buildPrechatKey = (userId) => `${PRECHAT_KEY_BASE}_${userId || 'anon'}`;
 
 const fileTypes = [
   { id: 'all', label: 'All Files', icon: File },
@@ -63,12 +64,14 @@ export default function StarredMessages() {
   const [decrypting, setDecrypting] = useState(true);
   const realtimeRef = useRef(null);
   const fetchedOnceRef = useRef(false);
+  const cachedLoadedRef = useRef(false);
+  const fetchInFlightRef = useRef(false);
 
   useUserChangeGuard(user?.id);
 
   useEffect(() => {
     if (!user?.id) return;
-    const prechatPassed = localStorage.getItem(PRECHAT_KEY);
+    const prechatPassed = localStorage.getItem(buildPrechatKey(user.id));
     if (!prechatPassed) {
       console.info('[StarredMessages] redirecting to prechat because key missing');
       navigate('/prechat', { state: { redirect: '/starred' } });
@@ -79,7 +82,6 @@ export default function StarredMessages() {
     async (messages = []) => {
       if (!mek) {
         setDecrypting(false);
-        setEncryptionError('Encryption key missing. Open PreChat to unlock starred items.');
         return [];
       }
       setDecrypting(true);
@@ -131,6 +133,8 @@ export default function StarredMessages() {
       setLoading(false);
       return;
     }
+    if (cachedLoadedRef.current) return;
+    cachedLoadedRef.current = true;
     setLoading(true);
     const cached = await loadMessages(user.id, 1000);
     console.info('[StarredMessages] loaded cached', { count: cached.length });
@@ -139,11 +143,17 @@ export default function StarredMessages() {
     const decrypted = await decryptMessages(starred);
     setStarredMessages(decrypted);
     setLoading(false);
-  }, [user?.id, decryptMessages]);
+  }, [user?.id, mek, decryptMessages]);
 
   useEffect(() => {
     loadCached();
   }, [loadCached]);
+
+  useEffect(() => {
+    cachedLoadedRef.current = false;
+    fetchedOnceRef.current = false;
+    setStarredMessages([]);
+  }, [user?.id]);
 
   // Initialize device once
   useEffect(() => {
@@ -158,15 +168,21 @@ export default function StarredMessages() {
     if (cached) {
       setMek(cached);
       setEncryptionError('');
-    } else {
-      setEncryptionError('Encryption key missing. Open PreChat to unlock starred items.');
     }
   }, [user?.id]);
 
+  useEffect(() => {
+    if (!mek) return;
+    setEncryptionError('');
+  }, [mek]);
+
   const fetchStarredMessages = useCallback(async () => {
+    if (!mek) return;
+    if (fetchInFlightRef.current) return;
+    fetchInFlightRef.current = true;
     try {
       setSyncing(true);
-      setLoading(true);
+      setLoading((prev) => prev || true);
       const token = await getToken();
       if (!token) return;
 
@@ -198,6 +214,7 @@ export default function StarredMessages() {
     } finally {
       setLoading(false);
       setSyncing(false);
+      fetchInFlightRef.current = false;
     }
   }, [getToken, user?.id, decryptMessages]);
 
@@ -282,28 +299,18 @@ export default function StarredMessages() {
       }
       realtimeRef.current = null;
     };
-  }, [user?.id, currentDevice?.deviceId, getToken]);
+  }, [user?.id, currentDevice?.deviceId]);
 
   useEffect(() => {
     const run = async () => {
       if (!user?.id) return;
+      if (!mek) return;
       if (fetchedOnceRef.current) return;
       fetchedOnceRef.current = true;
       await fetchStarredMessages();
     };
     run();
-  }, [user?.id, fetchStarredMessages]);
-
-  // If MEK arrives later and we have no starred loaded, refetch to avoid showing encrypted noise
-  useEffect(() => {
-    const run = async () => {
-      if (!mek) return;
-      if (!user?.id) return;
-      if (starredMessages.length) return;
-      await fetchStarredMessages();
-    };
-    run();
-  }, [mek, user?.id, starredMessages.length, fetchStarredMessages]);
+  }, [user?.id, mek, fetchStarredMessages]);
 
   // Re-decrypt starred messages once a MEK arrives
   useEffect(() => {
@@ -363,6 +370,11 @@ export default function StarredMessages() {
     [filteredMessages]
   );
 
+  const keyMissing = !mek;
+  const warningMessage = keyMissing
+    ? 'Encryption key missing. Open PreChat to unlock starred items.'
+    : encryptionError;
+
   return (
     <div className="min-h-screen bg-gray-950">
       {/* Header */}
@@ -385,9 +397,9 @@ export default function StarredMessages() {
 
       {/* Content */}
       <div className="container mx-auto px-4 py-6">
-        {encryptionError && (
+        {warningMessage && (
           <div className="mb-4 p-3 rounded-lg border border-yellow-600 bg-yellow-500/10 text-yellow-200 text-sm">
-            {encryptionError}
+            {warningMessage}
           </div>
         )}
         {loading || decrypting ? (

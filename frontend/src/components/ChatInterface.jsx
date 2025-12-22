@@ -9,39 +9,27 @@ import MessageContextMenu from './chat/MessageContextMenu';
 import ChatSidebar from './chat/ChatSidebar';
 import ChatHeader from './chat/ChatHeader';
 import MessageInput from './chat/MessageInput';
-import {
-  EncryptionGate,
-  DriveAuthOverlay,
-  DeleteConfirmModal,
-  DrivePromptModal,
-} from './chat/ChatModals';
+import { EncryptionGate, DeleteConfirmModal } from './chat/ChatModals';
 import Skeleton from './ui/Skeleton';
 import {
   clearMessages,
   deleteMessage as dexieDeleteMessage,
   loadMessages,
   upsertMessage,
-  clearAllUserData,
-  deleteDb,
+  getMessageById,
 } from '../db/dexie';
 import { createRealtimeClient } from '../utils/realtimeClient';
 import {
   initGisClient,
-  getAccessToken,
   hasValidToken,
   uploadFileToDrive,
   deleteFileFromDrive,
   getDriveContentUrl,
   getDriveThumbnailUrl,
-  revokeToken,
-  clearStoredToken,
   downloadFileFromDrive,
 } from '../utils/gisClient';
-import { clearCurrentDevice } from '../utils/deviceManager';
 import {
   buildEncryptionHeader,
-  clearCachedMek,
-  clearCachedSalt,
   decryptJson,
   encryptJson,
   loadCachedMek,
@@ -49,12 +37,14 @@ import {
 } from '../utils/crypto';
 import { formatBytes, extractFirstUrl, buildLinkMeta } from '../utils/messageUtils';
 import { useUserChangeGuard } from '../hooks/useUserChangeGuard';
+import { cleanupUserSession } from '../utils/sessionCleanup';
 
 const API_URL =
   import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 const ENABLE_REALTIME =
   String(import.meta.env.VITE_ENABLE_REALTIME || 'false').toLowerCase() === 'true';
-const PRECHAT_KEY = 'drivechat_prechat_passed';
+const PRECHAT_KEY_BASE = 'drivechat_prechat_passed';
+const buildPrechatKey = (userId) => `${PRECHAT_KEY_BASE}_${userId || 'anon'}`;
 
 export default function ChatInterface() {
   const { signOut, getToken } = useAuth();
@@ -88,28 +78,18 @@ export default function ChatInterface() {
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const messagesEndRef = useRef(null);
   const realtimeRef = useRef(null);
-  const [showDrivePrompt, setShowDrivePrompt] = useState(false);
-  const [authState, setAuthState] = useState({ status: 'idle', message: '' });
 
   useUserChangeGuard(user?.id);
 
   useEffect(() => {
     if (!user?.id) return;
-    console.info('[ChatInterface] user changed (mount/rehydrate), clearing caches');
-    setMessages([]);
-    setHasLoadedOnce(false);
-    (async () => {
-      try {
-        await clearMessages(user.id);
-        console.info('[ChatInterface] cleared Dexie cache for user on mount');
-      } catch (err) {
-        console.warn('[ChatInterface] failed to clear Dexie cache on mount', err?.message);
-      }
-    })();
-    const prechatPassed = localStorage.getItem(PRECHAT_KEY);
+    const prechatPassed = localStorage.getItem(buildPrechatKey(user.id));
     if (!prechatPassed) {
       navigate('/prechat', { state: { redirect: location.pathname || '/chat' } });
+      return;
     }
+    setMessages([]);
+    setHasLoadedOnce(false);
   }, [user?.id, navigate, location.pathname]);
 
   useEffect(() => {
@@ -192,15 +172,10 @@ export default function ChatInterface() {
     initGisClient();
     const authorized = hasValidToken();
     setDriveAuthorized(authorized);
-    setShowDrivePrompt(!authorized);
   }, []);
 
   useEffect(() => {
-    console.info('[ChatInterface] realtime config', {
-      ENABLE_REALTIME,
-      userId: user?.id || 'not-signed-in',
-      deviceId: currentDevice?.deviceId || 'no-device',
-    });
+    // Intentionally empty; we no longer log realtime config to reduce noise
   }, [ENABLE_REALTIME, user?.id, currentDevice?.deviceId]);
 
   // Helper functions - defined before useEffect hooks that use them
@@ -260,18 +235,10 @@ export default function ChatInterface() {
         return;
       }
 
-      console.info('[ChatInterface] fetchMessages start', {
-        showStarredOnly,
-        hasMek: Boolean(mek),
-        searchQuery,
-      });
-
       let url = `${API_URL}/api/messages`;
 
-      // If showing starred only, fetch from starred endpoint
       if (showStarredOnly) {
         url = `${API_URL}/api/messages/category/starred`;
-        console.log('Fetching starred messages from:', url);
       }
 
       const response = await axios.get(url, {
@@ -279,7 +246,6 @@ export default function ChatInterface() {
       });
 
       const receivedCount = response.data.messages?.length || 0;
-      console.info('[ChatInterface] fetchMessages response', { count: receivedCount, url });
 
       // Reverse the order so newest messages appear at the bottom
       const sortedMessages = (response.data.messages || []).sort(
@@ -289,7 +255,6 @@ export default function ChatInterface() {
       if (user?.id) {
         try {
           await clearMessages(user.id);
-          console.info('[ChatInterface] cleared Dexie before upsert');
         } catch (err) {
           console.warn('[ChatInterface] failed to clear Dexie before upsert', err?.message);
         }
@@ -304,7 +269,7 @@ export default function ChatInterface() {
         decryptedMessages.push(decrypted);
       }
 
-      console.info('[ChatInterface] decrypted + stored', {
+      console.debug('[ChatInterface] decrypted + stored', {
         decryptedCount: decryptedMessages.length,
       });
 
@@ -367,17 +332,13 @@ export default function ChatInterface() {
     syncPendingDeletions();
   }, [user?.id, syncPendingDeletions]);
 
-  // Load cached messages early (realtime mode)
+  // Load cached messages early (before network)
   useEffect(() => {
     const run = async () => {
-      if (!ENABLE_REALTIME) return;
       if (!user?.id) return;
       try {
         const cached = await loadMessages(user.id, 1000);
         if (cached?.length) {
-          console.info('[ChatInterface] loaded cached messages for realtime bootstrap', {
-            count: cached.length,
-          });
           const sorted = cached.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
           setMessages(sorted);
           setIsLoadingMessages(false);
@@ -391,9 +352,8 @@ export default function ChatInterface() {
   }, [user?.id]);
 
   useEffect(() => {
-    console.info('[ChatInterface] realtimeConnected changed', realtimeConnected);
+    // Keeping this effect silent until we need to diagnose realtime issues
     const interval = setInterval(() => {
-      // Only auto-refresh if: not searching, not filtering starred, and document is visible
       const usingPolling = !ENABLE_REALTIME || !realtimeConnected;
       if (
         usingPolling &&
@@ -401,15 +361,9 @@ export default function ChatInterface() {
         !showStarredOnly &&
         document.visibilityState === 'visible'
       ) {
-        console.info('[ChatInterface] polling triggered', {
-          usingPolling,
-          realtimeConnected,
-          searchQuery: searchQuery || 'empty',
-          showStarredOnly,
-        });
         fetchMessages();
       }
-    }, 2000); // Poll every 2 seconds for faster preview updates
+    }, 2000);
     return () => clearInterval(interval);
   }, [searchQuery, showStarredOnly, realtimeConnected, fetchMessages]);
 
@@ -421,12 +375,6 @@ export default function ChatInterface() {
       if (!currentDevice?.deviceId) return;
       if (realtimeRef.current) return;
 
-      console.info('[ChatInterface] realtime effect start', {
-        userId: user.id,
-        deviceId: currentDevice.deviceId,
-        realtimeRefExists: Boolean(realtimeRef.current),
-      });
-
       try {
         realtimeRef.current = await createRealtimeClient({
           apiUrl: API_URL,
@@ -436,11 +384,6 @@ export default function ChatInterface() {
           onStatus: ({ connected }) => setRealtimeConnected(Boolean(connected)),
           onEvent: async (event) => {
             if (!event?.type) return;
-            console.info('[ChatInterface] realtime event', {
-              type: event.type,
-              id: event.messageId || event?.message?.id,
-            });
-
             if (event.type === 'messages.cleared') {
               await clearMessages(user.id);
               setMessages([]);
@@ -457,6 +400,9 @@ export default function ChatInterface() {
             if (event.type === 'message.created' || event.type === 'message.updated') {
               const msg = event.message;
               if (!msg?.id) return;
+              if (event.type === 'message.created' && (await getMessageById(user.id, msg.id))) {
+                return;
+              }
               const decrypted = await decryptMessagePayload(msg);
               await upsertMessage(user.id, decrypted);
               setMessages((prev) => {
@@ -486,10 +432,8 @@ export default function ChatInterface() {
             if (event.type === 'drive.delete.request') {
               const driveFileId = event.driveFileId;
               if (!driveFileId) return;
-              console.info('[ChatInterface] drive.delete.request received:', driveFileId);
               try {
                 await deleteFileFromDrive(driveFileId);
-                console.info('[ChatInterface] Drive file deleted:', driveFileId);
                 // ACK the deletion to the server
                 realtimeRef.current?.socket?.emit('ack-drive-delete', { driveFileId });
               } catch (err) {
@@ -498,11 +442,6 @@ export default function ChatInterface() {
               return;
             }
           },
-        });
-        console.info('[ChatInterface] realtime client initialized', {
-          userId: user.id,
-          deviceId: currentDevice.deviceId,
-          socketId: realtimeRef.current?.socket?.id,
         });
       } catch (e) {
         console.warn('Realtime connection failed:', e?.message);
@@ -527,7 +466,6 @@ export default function ChatInterface() {
   useEffect(() => {
     const device = initializeDevice();
     setCurrentDevice(device);
-    console.info('[ChatInterface] Device initialized', device);
   }, []);
 
   useEffect(() => {
@@ -553,8 +491,6 @@ export default function ChatInterface() {
         return;
       }
 
-      console.log('\n💬 [sendMessage] Starting message send...');
-
       // Get device info from currentDevice state
       const device = currentDevice || initializeDevice();
       if (!currentDevice) setCurrentDevice(device);
@@ -575,7 +511,6 @@ export default function ChatInterface() {
       let webContentLink = null;
 
       if (selectedFile) {
-        console.info('   - 📎 File selected:', selectedFile.name);
         setPendingUpload({
           fileName: selectedFile.name,
           progress: 0,
@@ -585,8 +520,6 @@ export default function ChatInterface() {
           abort: null,
         });
         try {
-          console.info('   - 📤 Uploading file to Google Drive (client-side)...');
-
           const uploadResult = await uploadFileToDrive(
             selectedFile,
             (progressPayload) => {
@@ -606,7 +539,6 @@ export default function ChatInterface() {
             }
           );
 
-          console.info('   - ✅ File uploaded successfully:', uploadResult.fileName);
           setDriveAuthorized(true);
 
           driveFileId = uploadResult.driveFileId;
@@ -786,15 +718,6 @@ export default function ChatInterface() {
       const token = await getToken();
       if (!token) return;
 
-      console.log(
-        'Toggling star:',
-        messageId,
-        'Current starred:',
-        isStarred,
-        'New starred:',
-        !isStarred
-      );
-
       await axios.patch(
         `${API_URL}/api/messages/${messageId}`,
         {
@@ -822,53 +745,7 @@ export default function ChatInterface() {
   };
 
   const handleSignOut = async () => {
-    try {
-      await clearAllUserData(user?.id);
-    } catch (err) {
-      console.warn('Failed to clear Dexie on sign-out', err?.message);
-    }
-
-    try {
-      clearCachedMek(user?.id);
-      clearCachedSalt(user?.id);
-    } catch (err) {
-      console.warn('Failed to clear cached key on sign-out', err?.message);
-    }
-
-    try {
-      revokeToken();
-      clearStoredToken();
-    } catch (err) {
-      console.warn('Failed to clear GIS token on sign-out', err?.message);
-    }
-
-    try {
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('drivechat_')) localStorage.removeItem(key);
-      }
-    } catch (err) {
-      console.warn('Failed to clear drivechat localStorage keys on sign-out', err?.message);
-    }
-
-    try {
-      clearCurrentDevice();
-    } catch (err) {
-      console.warn('Failed to clear device info on sign-out', err?.message);
-    }
-
-    try {
-      sessionStorage.clear();
-    } catch (err) {
-      console.warn('Failed to clear sessionStorage on sign-out', err?.message);
-    }
-
-    try {
-      await deleteDb();
-    } catch (err) {
-      console.warn('Failed to delete Dexie database on sign-out', err?.message);
-    }
-
+    await cleanupUserSession(user?.id, { preserveLastSeen: true });
     await signOut();
     navigate('/');
   };
@@ -1094,33 +971,6 @@ export default function ChatInterface() {
     }
   };
 
-  const requestDriveAccess = async () => {
-    try {
-      setDriveAuthorized(false);
-      setShowDrivePrompt(false);
-      setAuthState({ status: 'authorizing', message: 'Requesting Google Drive access...' });
-
-      const loginHint = user?.primaryEmailAddress?.emailAddress;
-      const timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('popup_closed_or_blocked')), 25000)
-      );
-
-      await Promise.race([getAccessToken({ prompt: 'consent', login_hint: loginHint }), timeout]);
-
-      setDriveAuthorized(true);
-      setAuthState({ status: 'done', message: '' });
-      window?.focus?.();
-    } catch (err) {
-      console.warn('Drive consent failed:', err?.type || err?.message || err);
-      const humanMessage =
-        err?.message === 'popup_closed_or_blocked'
-          ? 'The Google window was closed or blocked. Please allow popups and try again.'
-          : err?.message || 'Drive access failed. Please try again.';
-      setAuthState({ status: 'error', message: humanMessage });
-      setShowDrivePrompt(true);
-    }
-  };
-
   const handleViewFile = (message) => {
     if (message.filePreviewUrl) {
       window.open(message.filePreviewUrl, '_blank');
@@ -1154,17 +1004,6 @@ export default function ChatInterface() {
     );
   }
 
-  if (authState.status === 'authorizing' || authState.status === 'error') {
-    return (
-      <DriveAuthOverlay
-        status={authState.status}
-        message={authState.message}
-        onRetry={requestDriveAccess}
-        onCancel={() => setAuthState({ status: 'idle', message: '' })}
-      />
-    );
-  }
-
   return (
     <div className="h-screen bg-gray-950 flex overflow-hidden">
       <DeleteConfirmModal
@@ -1172,7 +1011,6 @@ export default function ChatInterface() {
         onConfirm={() => performDelete(confirmDelete)}
         onCancel={() => setConfirmDelete(null)}
       />
-      <DrivePromptModal visible={showDrivePrompt} onRequestAccess={requestDriveAccess} />
       <ChatSidebar
         user={user}
         session={session}

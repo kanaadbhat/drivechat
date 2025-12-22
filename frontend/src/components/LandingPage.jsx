@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth, useUser } from '@clerk/clerk-react';
+import { cleanupUserSession } from '../utils/sessionCleanup';
 import { MessageSquare, Star, Upload, Shield, Zap, Cloud } from 'lucide-react';
 
 export default function LandingPage() {
@@ -87,6 +88,7 @@ export default function LandingPage() {
                     <button
                       onClick={async () => {
                         setShowProfileMenu(false);
+                        await cleanupUserSession(user?.id, { preserveLastSeen: true });
                         await signOut();
                         navigate('/');
                       }}

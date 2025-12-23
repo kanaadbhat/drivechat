@@ -1035,7 +1035,17 @@ export default function ChatInterface() {
         />
 
         {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div
+          className="flex-1 overflow-y-auto p-4 space-y-4"
+          style={{
+            backgroundImage: "url('/minimalist-bg.jpg')",
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            backgroundRepeat: 'no-repeat',
+            backgroundColor: 'rgba(0,0,0,0.35)',
+            backgroundBlendMode: 'overlay',
+          }}
+        >
           <ChatBody
             messages={messages}
             isLoading={isLoadingMessages}

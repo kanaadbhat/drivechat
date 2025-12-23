@@ -437,7 +437,17 @@ export default function PreChat() {
               : error || '';
 
   return (
-    <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
+    <div
+      className="min-h-screen bg-gray-950 flex items-center justify-center p-6"
+      style={{
+        backgroundImage: "url('/dark-blue-bg.jpg')",
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        backgroundBlendMode: 'overlay',
+      }}
+    >
       <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8 max-w-xl w-full text-center space-y-5 shadow-2xl">
         {(status === 'checking' ||
           status === 'consenting' ||
@@ -452,6 +462,17 @@ export default function PreChat() {
         )}
         <h1 className="text-2xl font-bold text-white">Preparing DriveChat</h1>
         <p className="text-gray-300 text-sm whitespace-pre-wrap">{subtitle}</p>
+
+        <div className="flex flex-col sm:flex-row items-center gap-2 justify-center text-xs text-gray-400">
+          <span>Having trouble unlocking chat?</span>
+          <button
+            type="button"
+            onClick={() => navigate('/learn-more')}
+            className="text-blue-400 hover:text-blue-300 underline"
+          >
+            Read how access works
+          </button>
+        </div>
 
         <div className="bg-gray-800/60 border border-gray-700 rounded-xl text-left p-4 space-y-3">
           <p className="text-gray-200 font-semibold text-sm">What we are doing:</p>
@@ -540,7 +561,7 @@ export default function PreChat() {
               <p className="text-xs text-gray-400">
                 {isFirstSetup
                   ? 'We derive a device-only key via scrypt and store only a salt remotely. Keep this password safe for every future login.'
-                  : 'Your cached key was missing; re-enter to unlock existing data.'}
+                  : 'ReEnter the password you set during your first DriveChat login on this device.'}
               </p>
               {keyError && <p className="text-xs text-red-400">{keyError}</p>}
             </div>

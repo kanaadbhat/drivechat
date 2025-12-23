@@ -20,9 +20,6 @@ export default function SignInPage() {
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-white mb-2">Welcome to DriveChat</h1>
           <p className="text-gray-400">Sign in with your Google account to get started</p>
-          <p className="text-sm text-gray-500 mt-2">
-            Google Drive permissions will be requested on first login
-          </p>
         </div>
         <SignIn
           appearance={{

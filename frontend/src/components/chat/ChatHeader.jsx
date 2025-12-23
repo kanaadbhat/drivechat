@@ -21,14 +21,10 @@ export default function ChatHeader({
         </button>
 
         <div className="flex items-center gap-2 flex-1 min-w-0">
-          <div className="w-8 h-8 bg-linear-to-br from-blue-500 via-purple-500 to-pink-500 rounded-lg flex items-center justify-center shadow-lg shrink-0">
-            <span className="text-lg">💬</span>
-          </div>
+          <img src="/logo.png" alt="DriveChat" className="w-9 h-9 rounded-md shadow-md shrink-0" />
           {!showSearch ? (
             <div className="flex flex-col min-w-0 flex-1">
-              <h2 className="font-bold text-lg bg-linear-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent truncate">
-                DriveChat
-              </h2>
+              <h2 className="font-display font-semibold text-lg text-white truncate">DriveChat</h2>
               <p className="text-xs text-gray-400 truncate">
                 {showStarredOnly ? 'Starred Messages' : `${messagesCount} messages`}
               </p>

@@ -25,10 +25,8 @@ export default function ChatSidebar({
           className="flex items-center gap-3 focus:outline-none"
           aria-label="Go to landing page"
         >
-          <div className="w-10 h-10 bg-linear-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-            <span className="text-xl">💬</span>
-          </div>
-          <span className="font-bold text-white">DriveChat</span>
+          <img src="/logo.png" alt="DriveChat" className="w-10 h-10 rounded-lg shadow-md" />
+          <span className="font-bold text-white font-display">DriveChat</span>
         </button>
         <button
           onClick={() => setShowSidebar(false)}
@@ -75,7 +73,20 @@ export default function ChatSidebar({
         </div>
       </div>
 
-      <div className="p-4 border-t border-gray-800">
+      <div className="p-4 border-t border-gray-800 space-y-3">
+        <div className="p-3 rounded-lg bg-gray-800 border border-gray-700 text-sm text-gray-300">
+          <p className="font-semibold text-white mb-1">Need to refresh access?</p>
+          <p className="leading-relaxed">
+            If chat looks inaccessible, sign out and sign back in. Keep your password safe—lost
+            passwords cannot be recovered. See Learn More for details.
+          </p>
+          <p
+            className="mt-2 text-blue-200 underline cursor-pointer"
+            onClick={() => navigate('/learn-more')}
+          >
+            Learn More
+          </p>
+        </div>
         <button
           onClick={onSignOut}
           className="w-full px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors flex items-center justify-center gap-2"

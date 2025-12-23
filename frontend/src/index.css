@@ -1,14 +1,43 @@
 @import 'tailwindcss';
 
-html {
-  color-scheme: dark;
-  background-color: #0f172a;
-  color: #ffffff;
+@layer base {
+  :root {
+    --dc-blue: #1a73e8;
+    --dc-yellow: #f9ab00;
+    --dc-green: #34a853;
+    --dc-red: #ea4335;
+    --dc-dark: #0b1224;
+  }
+
+  html {
+    font-family:
+      'Inter',
+      system-ui,
+      -apple-system,
+      sans-serif;
+    color-scheme: dark;
+    background-color: var(--dc-dark);
+    color: #ffffff;
+  }
+
+  body {
+    background-color: var(--dc-dark);
+    color: #ffffff;
+  }
+
+  .font-display {
+    font-family:
+      'Space Grotesk',
+      'Inter',
+      system-ui,
+      -apple-system,
+      sans-serif;
+    letter-spacing: -0.01em;
+  }
 }
 
-body {
-  background-color: #0f172a;
-  color: #ffffff;
+html {
+  color-scheme: dark;
 }
 
 /* Custom scrollbar */

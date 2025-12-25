@@ -1,14 +1,6 @@
 import { Star, Settings, LogOut, X } from 'lucide-react';
 
-export default function ChatSidebar({
-  user,
-  session,
-  driveAuthorized,
-  showSidebar,
-  setShowSidebar,
-  navigate,
-  onSignOut,
-}) {
+export default function ChatSidebar({ user, showSidebar, setShowSidebar, navigate, onSignOut }) {
   return (
     <div
       className={`${

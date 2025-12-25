@@ -1,4 +1,3 @@
-/* eslint-disable no-unused-vars */
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ClerkProvider } from '@clerk/clerk-react';
 import LandingPage from './components/LandingPage';
@@ -9,7 +8,6 @@ import SettingsPage from './components/SettingsPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import PreChat from './components/PreChat';
 import LearnMore from './components/LearnMore';
-/* eslint-enable no-unused-vars */
 
 const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 

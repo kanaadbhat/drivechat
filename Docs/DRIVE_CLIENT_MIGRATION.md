@@ -1,4 +1,6 @@
-# Drive Client-Side Migration Plan
+# Drive Client-Side Migration
+
+**Status**: ✅ Implemented
 
 Goal: move all Google Drive access to the client. Backend stores only encrypted metadata and timestamps, coordinates deletion via realtime (no polling), and never holds Drive tokens.
 

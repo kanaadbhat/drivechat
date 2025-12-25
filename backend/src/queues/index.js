@@ -1,6 +1,6 @@
 import logger from '../utils/logger.js';
 
-// Import cleanup queue only (Drive/file queues are retired - client handles Drive)
+// Import cleanup queue only
 import { cleanupQueue, cleanupWorker, setupPeriodicCleanup } from './cleanupQueue.js';
 
 // Export active queues and functions
@@ -28,7 +28,6 @@ export async function initializeQueues() {
       await setupPeriodicCleanup();
     }
 
-    logger.info('Active queues: cleanup');
     logger.success('✅ Queue system initialized successfully');
   } catch (error) {
     logger.error('❌ Failed to initialize queue system:', error);

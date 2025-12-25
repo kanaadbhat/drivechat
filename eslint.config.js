@@ -32,7 +32,8 @@ export default [
     },
     rules: {
       'react/react-in-jsx-scope': 'off',
-      'no-unused-vars': 'warn',
+      'no-unused-vars': ['warn', { varsIgnorePattern: '^[A-Z_]' }],
+      'react/jsx-uses-vars': 'error',
       ...reactHooks.configs.recommended.rules,
     },
     settings: {

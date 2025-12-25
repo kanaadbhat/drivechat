@@ -11,12 +11,12 @@ export default function ProtectedRoute({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const prechatOk = useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    return Boolean(localStorage.getItem(buildPrechatKey(user?.id)));
-  }, [location.key, user?.id]);
-
   const isOnPrechat = location.pathname === '/prechat';
+
+  const prechatOk =
+    typeof window === 'undefined'
+      ? false
+      : Boolean(localStorage.getItem(buildPrechatKey(user?.id)));
 
   useEffect(() => {
     if (!isLoaded || !isUserLoaded) return;
@@ -26,7 +26,9 @@ export default function ProtectedRoute({ children }) {
       return;
     }
 
-    if (!prechatOk && !isOnPrechat) {
+    if (isOnPrechat) return;
+
+    if (!prechatOk) {
       navigate('/prechat', {
         replace: true,
         state: { redirect: location.pathname + location.search },
@@ -36,14 +38,14 @@ export default function ProtectedRoute({ children }) {
     isSignedIn,
     isLoaded,
     isUserLoaded,
-    navigate,
     prechatOk,
     isOnPrechat,
     location.pathname,
     location.search,
-    user?.id,
+    navigate,
   ]);
 
+  // Loading state
   if (!isLoaded || !isUserLoaded) {
     return (
       <div className="min-h-screen bg-gray-950 flex items-center justify-center">
@@ -56,6 +58,7 @@ export default function ProtectedRoute({ children }) {
     return null;
   }
 
+  // Don't render children while redirecting to prechat
   if (!prechatOk && !isOnPrechat) {
     return null;
   }

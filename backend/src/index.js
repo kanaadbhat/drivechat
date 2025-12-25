@@ -11,8 +11,6 @@ dotenv.config();
 // Import routes
 import messageRoutes from './routes/messages.js';
 import userRoutes from './routes/users.js';
-import adminRoutes from './routes/admin.js';
-// NOTE: fileRoutes, authorizationRoutes, and authenticationRoutes removed - Drive handled client-side
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler.js';
@@ -32,8 +30,8 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+// Only small JSON payloads are expected; uploads happen client-side
+app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 app.use(morgan(process.env.NODE_ENV === 'development' ? 'dev' : 'combined'));
 
@@ -49,8 +47,6 @@ app.get('/health', (req, res) => {
 // API Routes
 app.use('/api/messages', messageRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/admin', adminRoutes);
-// NOTE: /api/authentication, /api/files and /api/authorization removed - Drive handled client-side
 
 // 404 handler
 app.use((req, res) => {

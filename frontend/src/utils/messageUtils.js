@@ -33,7 +33,7 @@ export const buildLinkMeta = (url, textValue) => {
       linkDescription: host,
       linkImage: `https://www.google.com/s2/favicons?sz=128&domain=${host}`,
     };
-  } catch (e) {
+  } catch {
     return {
       linkUrl: url,
       linkTitle: textValue || url,
@@ -47,7 +47,7 @@ export const getHostname = (url = '') => {
   try {
     const u = new URL(url.startsWith('http') ? url : `https://${url}`);
     return u.hostname.replace(/^www\./, '');
-  } catch (e) {
+  } catch {
     return url;
   }
 };

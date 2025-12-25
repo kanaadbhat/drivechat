@@ -316,7 +316,7 @@ export async function uploadFileToDrive(file, onProgress, onAbortable) {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           resolve(JSON.parse(xhr.responseText || '{}'));
-        } catch (err) {
+        } catch {
           resolve({});
         }
       } else {

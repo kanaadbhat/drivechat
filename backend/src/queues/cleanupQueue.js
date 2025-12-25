@@ -1,5 +1,5 @@
 import { createQueue, createWorker } from './config.js';
-import { cleanupExpiredMessages, cleanupTempFiles } from '../services/cleanupService.js';
+import { cleanupExpiredMessages } from '../services/cleanupService.js';
 import logger from '../utils/logger.js';
 
 // Queue name
@@ -19,9 +19,6 @@ async function processCleanupJob(job) {
   switch (type) {
     case 'expired-messages':
       return await cleanupExpiredMessages();
-
-    case 'temp-files':
-      return await cleanupTempFiles();
 
     case 'specific-message': {
       // Delete a specific message after its expiration time
@@ -122,20 +119,6 @@ export async function setupPeriodicCleanup() {
           pattern: '0 */1 * * *',
         },
         jobId: 'periodic-expired-messages-cleanup',
-      }
-    );
-
-    // Clean up temp files every 24 hours
-    await cleanupQueue.add(
-      'temp-files',
-      {
-        type: 'temp-files',
-      },
-      {
-        repeat: {
-          pattern: '0 2 * * *', // Daily at 2 AM
-        },
-        jobId: 'periodic-temp-files-cleanup',
       }
     );
 

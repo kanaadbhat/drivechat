@@ -143,8 +143,6 @@ export const initializeDevice = () => {
   let device = getCurrentDevice();
 
   if (!device) {
-    // Create a temporary guest device
-    const detectedType = detectDeviceType();
     device = {
       deviceId: generateDeviceId(),
       name: generateDefaultDeviceName(DEVICE_TYPES.GUEST),

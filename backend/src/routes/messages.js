@@ -15,9 +15,6 @@ router.get('/', asyncHandler(messageController.getMessages));
 router.get('/pending-deletions', asyncHandler(messageController.listPendingDeletions));
 router.post('/pending-deletions/ack', asyncHandler(messageController.ackPendingDeletions));
 
-// Search messages
-router.get('/search', asyncHandler(messageController.searchMessages));
-
 // Get messages by category
 router.get('/category/:category', asyncHandler(messageController.getMessagesByCategory));
 

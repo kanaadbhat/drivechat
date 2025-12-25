@@ -15,7 +15,7 @@ import { loadMessages, upsertMessage } from '../db/dexie';
 import { initializeDevice } from '../utils/deviceManager';
 import { createRealtimeClient } from '../utils/realtimeClient';
 import { decryptJson, loadCachedMek } from '../utils/crypto';
-import { containsUrl, extractFirstUrl, getHostname } from '../utils/messageUtils';
+import { containsUrl } from '../utils/messageUtils';
 import { useUserChangeGuard } from '../hooks/useUserChangeGuard';
 import StarredHeader from './starred/StarredHeader';
 import FileTypeFilter from './starred/FileTypeFilter';
@@ -216,7 +216,7 @@ export default function StarredMessages() {
       setSyncing(false);
       fetchInFlightRef.current = false;
     }
-  }, [getToken, user?.id, decryptMessages]);
+  }, [getToken, user?.id, decryptMessages, mek]);
 
   // Realtime starred sync
   useEffect(() => {
@@ -299,7 +299,7 @@ export default function StarredMessages() {
       }
       realtimeRef.current = null;
     };
-  }, [user?.id, currentDevice?.deviceId]);
+  }, [user?.id, currentDevice?.deviceId, getToken, decryptMessages]);
 
   useEffect(() => {
     const run = async () => {
@@ -323,7 +323,7 @@ export default function StarredMessages() {
       setLoading(false);
     };
     run();
-  }, [mek]);
+  }, [mek, starredMessages, decryptMessages]);
 
   const unstarMessage = async (messageId) => {
     try {

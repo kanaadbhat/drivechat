@@ -100,7 +100,7 @@ Modern users own multiple devices (laptop, phone, tablet) but moving content bet
 - ✅ Star important messages to keep indefinitely
 - ✅ Edit text messages (marked as edited)
 - ✅ Delete messages manually
-- ✅ Search across all messages
+- ✅ Client-side search across decrypted messages (Dexie)
 - ✅ Filter by starred/category
 
 ### File Handling

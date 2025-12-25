@@ -352,28 +352,6 @@ export const deleteMessage = asyncHandler(async (req, res) => {
 });
 
 /**
- * Search messages
- */
-export const searchMessages = asyncHandler(async (req, res) => {
-  const { userId } = req;
-  const { q } = req.query;
-
-  if (!q) {
-    return res.status(400).json({
-      error: 'Search query is required',
-    });
-  }
-
-  // Encrypted content cannot be server-searched; clients perform local search over decrypted cache.
-  res.json({
-    messages: [],
-    count: 0,
-    query: q,
-    note: 'Encrypted messages are searchable only on the client.',
-  });
-});
-
-/**
  * List pending Drive deletions (for offline sync)
  */
 export const listPendingDeletions = asyncHandler(async (req, res) => {

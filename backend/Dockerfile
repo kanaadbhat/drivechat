@@ -1,18 +1,9 @@
 # Backend Dockerfile (production-ready)
-FROM node:22-bullseye-slim
+FROM node:22-alpine
 
 WORKDIR /app
 
-# Install system dependencies for previews (poppler), sharp (libvips), and media (ffmpeg)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential python3 make g++ \
-    poppler-utils \
-    libvips-dev \
-    ffmpeg \
-    ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
-
-# Copy package files and install production deps
+# Install only production dependencies
 COPY package*.json ./
 RUN npm ci --omit=dev
 

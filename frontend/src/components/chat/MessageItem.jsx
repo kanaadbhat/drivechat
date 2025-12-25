@@ -41,7 +41,7 @@ const getHostname = (url = '') => {
   try {
     const u = new URL(url.startsWith('http') ? url : `https://${url}`);
     return u.hostname.replace(/^www\./, '');
-  } catch (e) {
+  } catch {
     return url;
   }
 };

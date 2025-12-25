@@ -20,7 +20,7 @@ function roomForUser(userId) {
 }
 
 function pickMaxStreamId(a, b) {
-  // Stream IDs are comparable lexicographically for our purposes in the same redis instance.
+  // Stream IDs are comparable lexicographically in the same redis instance.
   if (!a) return b || null;
   if (!b) return a || null;
   return a > b ? a : b;

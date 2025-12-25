@@ -129,7 +129,6 @@ export default function SettingsPage() {
   };
 
   const handleAddCurrentDevice = async () => {
-    const device = getCurrentDevice();
     const detectedType = detectDeviceType();
     setNewDeviceType(detectedType);
     setNewDeviceName(generateDefaultDeviceName(detectedType));

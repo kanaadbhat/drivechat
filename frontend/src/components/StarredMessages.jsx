@@ -312,18 +312,30 @@ export default function StarredMessages() {
     run();
   }, [user?.id, mek, fetchStarredMessages]);
 
-  // Re-decrypt starred messages once a MEK arrives
+  // Re-decrypt starred messages once a MEK arrives (single-shot per MEK)
   useEffect(() => {
+    let cancelled = false;
     const run = async () => {
       if (!mek) return;
       if (!starredMessages.length) return;
       setLoading(true);
       const decrypted = await decryptMessages(starredMessages);
-      setStarredMessages(decrypted);
+      if (cancelled) return;
+      setStarredMessages((prev) => {
+        if (prev.length === decrypted.length && prev.every((m, i) => m.id === decrypted[i]?.id)) {
+          return prev; // avoid useless state churn that can re-trigger effects
+        }
+        return decrypted;
+      });
       setLoading(false);
     };
     run();
-  }, [mek, starredMessages, decryptMessages]);
+    return () => {
+      cancelled = true;
+    };
+    // deliberately omit starredMessages/decryptMessages to avoid infinite re-runs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mek]);
 
   const unstarMessage = async (messageId) => {
     try {

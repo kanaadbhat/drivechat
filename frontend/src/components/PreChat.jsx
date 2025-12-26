@@ -19,14 +19,7 @@ import {
   loadCachedSalt,
 } from '../utils/crypto';
 import { ensurePersistedLastSeenId, setPersistedLastSeenId } from '../utils/lastSeenManager';
-import {
-  getMeta,
-  setMeta,
-  resetDb,
-  upsertMessage,
-  deleteMessage,
-  clearMessages,
-} from '../db/dexie';
+import { upsertMessage, deleteMessage, clearMessages } from '../db/dexie';
 
 const API_URL =
   import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';

@@ -174,10 +174,6 @@ export default function ChatInterface() {
     setDriveAuthorized(authorized);
   }, []);
 
-  useEffect(() => {
-    // Intentionally empty; we no longer log realtime config to reduce noise
-  }, [ENABLE_REALTIME, user?.id, currentDevice?.deviceId]);
-
   // Helper functions - defined before useEffect hooks that use them
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
@@ -244,8 +240,6 @@ export default function ChatInterface() {
       const response = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
-
-      const receivedCount = response.data.messages?.length || 0;
 
       // Reverse the order so newest messages appear at the bottom
       const sortedMessages = (response.data.messages || []).sort(
@@ -507,9 +501,6 @@ export default function ChatInterface() {
       let fileSize = null;
       let mimeType = null;
       let fileCategory = null;
-      let webViewLink = null;
-      let webContentLink = null;
-
       if (selectedFile) {
         setPendingUpload({
           fileName: selectedFile.name,
@@ -545,9 +536,6 @@ export default function ChatInterface() {
           fileName = uploadResult.fileName;
           fileSize = uploadResult.size;
           mimeType = uploadResult.mimeType;
-          webViewLink = uploadResult.webViewLink;
-          webContentLink = uploadResult.webContentLink;
-
           // Determine file category
           if (mimeType?.startsWith('image/')) {
             fileCategory = 'image';

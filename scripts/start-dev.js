@@ -19,22 +19,22 @@ function runInherit(cmd) {
   }
 }
 
-console.log('Checking Redis container (drivechat-redis)...');
+console.log('Checking Redis container (drivechat-redis-test)...');
 
 let includeRedisInConcurrently = false;
 const running = run(
-  'docker ps --filter "name=drivechat-redis" --filter "status=running" --format "{{.Names}}"'
+  'docker ps --filter "name=drivechat-redis-test" --filter "status=running" --format "{{.Names}}"'
 );
 if (running) {
   console.log('Redis container is already running:', running);
   includeRedisInConcurrently = false;
 } else {
   const exists = run(
-    'docker ps -a --filter "name=drivechat-redis" --format "{{.Names}}\t{{.Status}}"'
+    'docker ps -a --filter "name=drivechat-redis-test" --format "{{.Names}}\t{{.Status}}"'
   );
   if (exists) {
     console.log('Found existing container (not running). Starting it...');
-    if (!runInherit('docker start drivechat-redis')) process.exit(1);
+    if (!runInherit('docker start drivechat-redis-test')) process.exit(1);
     includeRedisInConcurrently = false;
   } else {
     console.log('No existing container found. Creating/starting via docker-compose...');

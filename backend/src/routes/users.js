@@ -1,6 +1,11 @@
 import express from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
+import {
+  userProfileLimiter,
+  deviceLimiter,
+  sensitiveActionLimiter,
+} from '../middleware/rateLimiter.js';
 import * as userController from '../controllers/userController.js';
 
 const router = express.Router();
@@ -9,27 +14,27 @@ const router = express.Router();
 router.use(requireAuth);
 
 // Get current user profile
-router.get('/me', asyncHandler(userController.getCurrentUser));
+router.get('/me', userProfileLimiter, asyncHandler(userController.getCurrentUser));
 
 // Update user profile
-router.patch('/me', asyncHandler(userController.updateUser));
+router.patch('/me', userProfileLimiter, asyncHandler(userController.updateUser));
 
 // Get user devices
-router.get('/devices', asyncHandler(userController.getDevices));
+router.get('/devices', userProfileLimiter, asyncHandler(userController.getDevices));
 
 // Create/register a device
-router.post('/devices', asyncHandler(userController.createDevice));
+router.post('/devices', deviceLimiter, asyncHandler(userController.createDevice));
 
 // Update device (rename)
-router.patch('/devices/:deviceId', asyncHandler(userController.updateDevice));
+router.patch('/devices/:deviceId', deviceLimiter, asyncHandler(userController.updateDevice));
 
 // Delete device
-router.delete('/devices/:deviceId', asyncHandler(userController.deleteDevice));
+router.delete('/devices/:deviceId', deviceLimiter, asyncHandler(userController.deleteDevice));
 
 // Get user analytics
-router.get('/analytics', asyncHandler(userController.getAnalytics));
+router.get('/analytics', userProfileLimiter, asyncHandler(userController.getAnalytics));
 
 // Delete user account
-router.delete('/me', asyncHandler(userController.deleteAccount));
+router.delete('/me', sensitiveActionLimiter, asyncHandler(userController.deleteAccount));
 
 export default router;

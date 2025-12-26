@@ -64,11 +64,14 @@ export function ImagePreview({
     return () => clearTimeout(t);
   }, [fileId, releaseBlob]);
 
-  const setBlob = (url) => {
-    releaseBlob();
-    blobRef.current = url;
-    setBlobUrl(url);
-  };
+  const setBlob = useCallback(
+    (url) => {
+      releaseBlob();
+      blobRef.current = url;
+      setBlobUrl(url);
+    },
+    [releaseBlob]
+  );
 
   const downloadFallback = useCallback(async () => {
     if (!hasValidToken()) {
@@ -85,7 +88,7 @@ export function ImagePreview({
       console.warn('[ImagePreview] fallback download failed', err?.message);
       onFallback?.();
     }
-  }, [fileId, message.mimeType, onFallback]);
+  }, [fileId, message.mimeType, onFallback, setBlob]);
 
   useEffect(() => {
     if (!thumbnailUrl && !fullUrl && !downloadAttempted) {
@@ -126,8 +129,8 @@ export function ImagePreview({
 }
 
 // Video preview - embeds Drive player
-export function VideoPreview({ message, getFileUrl, variant = 'default', onFallback, shouldLoad }) {
-  const { fileId, fileName, durationMs, mimeType } = message;
+export function VideoPreview({ message, variant = 'default', onFallback, shouldLoad }) {
+  const { fileId, durationMs, mimeType } = message;
   const [previewUrl, setPreviewUrl] = useState('');
 
   useEffect(() => {
@@ -159,7 +162,7 @@ export function VideoPreview({ message, getFileUrl, variant = 'default', onFallb
       cancelled = true;
       if (revokedUrl) URL.revokeObjectURL(revokedUrl);
     };
-  }, [fileId, mimeType, shouldLoad]);
+  }, [fileId, mimeType, shouldLoad, onFallback]);
 
   const sizeClass = variant === 'compact' ? 'w-56 h-40' : 'w-64 h-48';
 
@@ -194,7 +197,7 @@ export function VideoPreview({ message, getFileUrl, variant = 'default', onFallb
 // Audio preview - simple audio player
 export function AudioPreview({ message, getFileUrl, variant = 'default', onFallback }) {
   const [isPlaying, setIsPlaying] = useState(false);
-  const { fileId, fileName, durationMs } = message;
+  const { fileId, durationMs } = message;
 
   const audioUrl = getFileUrl?.(fileId);
 
@@ -277,7 +280,7 @@ export function PDFPreview({ message, variant = 'default', onFallback, shouldLoa
       cancelled = true;
       if (revokedUrl) URL.revokeObjectURL(revokedUrl);
     };
-  }, [fileId, mimeType, shouldLoad]);
+  }, [fileId, mimeType, shouldLoad, onFallback]);
 
   const sizeClass = variant === 'compact' ? 'w-full h-64' : 'w-64 h-80';
 
@@ -356,7 +359,7 @@ export default function FilePreview({ message, getFileUrl, getThumbnailUrl, vari
   if (isHeavyType && !shouldLoad) {
     return (
       <div className="relative overflow-hidden rounded-lg bg-gray-800/70 border border-gray-700 p-4 space-y-3">
-        <div className="relative h-32 w-full overflow-hidden rounded-lg bg-gradient-to-br from-gray-800 via-gray-850 to-gray-900">
+        <div className="relative h-32 w-full overflow-hidden rounded-lg bg-linear-to-br from-gray-800 via-gray-850 to-gray-900">
           <div className="absolute inset-0 backdrop-blur-lg bg-white/5" />
           <div className="absolute inset-0 flex items-center justify-center">
             <div className="flex flex-col items-center gap-2 px-4 py-3 rounded-2xl bg-gray-900/60 border border-white/15 shadow-lg shadow-black/30">
@@ -402,7 +405,6 @@ export default function FilePreview({ message, getFileUrl, getThumbnailUrl, vari
     return (
       <VideoPreview
         message={message}
-        getFileUrl={getFileUrl}
         variant={variant}
         onFallback={fallback}
         shouldLoad={shouldLoad}

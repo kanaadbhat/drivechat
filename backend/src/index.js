@@ -71,7 +71,6 @@ server.listen(PORT, async () => {
     'CONFIG SKIP_PERIODIC_CLEANUP=',
     String(process.env.SKIP_PERIODIC_CLEANUP || 'false')
   );
-  console.log('CONFIG REDIS_HOST=', process.env.REDIS_HOST || 'localhost');
   console.log('CONFIG REALTIME_STREAM_MAXLEN=', process.env.REALTIME_STREAM_MAXLEN || '10000');
 
   // Initialize realtime (Socket.IO + Redis Streams)

@@ -1,0 +1,52 @@
+//redis
+
+docker pull redis:7-alpine
+docker images | findstr redis
+
+docker exec -it drivechat-redis-test redis-cli
+INFO clients
+
+
+//network
+
+docker network create drivechat-net
+
+docker run -d `
+  --name drivechat-redis-test `
+  --network drivechat-net `
+  -p 6379:6379 `
+  redis:7-alpine
+docker ps
+docker exec -it drivechat-redis-test redis-cli ping
+
+
+//backend
+
+cd backend
+docker build --no-cache -t drivechat-backend-prod .
+docker images | findstr drivechat-backend-prod
+
+docker run -d `
+  --name drivechat-backend `
+  --network drivechat-net `
+  -p 5000:5000 `
+  --env-file .env `
+  -e REDIS_URL=redis://drivechat-redis-test:6379 `
+  -e PORT=5000 `
+  -e NODE_ENV=production `
+  drivechat-backend-prod
+
+
+
+
+//Frontend
+
+  docker build --no-cache -t drivechat-frontend-prod .
+  docker images | findstr drivechat-frontend-prod
+
+docker run -d `
+  --name drivechat-frontend `
+  -p 5173:80 `
+  drivechat-frontend-prod
+
+

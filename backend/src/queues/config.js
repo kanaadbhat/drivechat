@@ -1,21 +1,10 @@
 import { Queue, Worker } from 'bullmq';
-import dotenv from 'dotenv';
+import redis from '../config/redis.js';
 import logger from '../utils/logger.js';
-
-dotenv.config();
-
-// Redis connection options for BullMQ
-const redisConnection = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379'),
-  password: process.env.REDIS_PASSWORD || undefined,
-  maxRetriesPerRequest: null,
-  enableReadyCheck: false,
-};
 
 // Default queue options
 export const defaultQueueOptions = {
-  connection: redisConnection,
+  connection: redis,
   defaultJobOptions: {
     attempts: 3,
     backoff: {
@@ -34,7 +23,7 @@ export const defaultQueueOptions = {
 
 // Default worker options
 export const defaultWorkerOptions = {
-  connection: redisConnection,
+  connection: redis,
   concurrency: 5,
   limiter: {
     max: 10,
@@ -83,5 +72,3 @@ export function createWorker(name, processor, options = {}) {
   logger.info(`Worker ${name} started`);
   return worker;
 }
-
-export { redisConnection };

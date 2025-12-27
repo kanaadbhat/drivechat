@@ -1,51 +1,157 @@
 # DriveChat
 
-A private, cross-device workspace for syncing messages and files with yourself. DriveChat focuses on personal sync and strong privacy: no phone number required, end-to-end encryption, and files kept in your Google Drive.
+The private, encrypted workspace for chatting with yourself.
 
-## Quick pitch
+DriveChat is a self-hosted, cross-platform space to sync notes, links, and files between your devices—without the noise of social media or the privacy risks of cloud storage. Think of it as a digital dumping ground that you control completely.
 
-- **No Phone Required**: Sign in with your Google account—no SMS verification, no phone number sharing.
-- **Personal Sync**: Designed for "chatting with yourself"—a secure bridge to move notes, links, and files between your own devices.
-- **End-to-end encrypted**: Messages and attachments are encrypted on your device before upload. Only you hold the keys.
-- **Your Drive, your data**: Files live in the `DriveChat` folder in your Google Drive. DriveChat never hosts your files.
+---
 
-## Features
+## 🧠 Why I Built This
 
-- Instant sync across logged-in devices (real-time via Socket.IO).
-- End-to-end encryption derived from a user password/unlock step.
-- Client-side previews for media and PDFs (no heavy server-side processing).
-- Starred messages to keep important items permanently accessible.
-- Optional auto-delete scheduling handled via backend queues (BullMQ + Redis) for cleanup metadata—files remain in your Drive.
+We’ve all done it—texting the “Me” chat on WhatsApp or Telegram just to send a link to our laptop. But it’s inconvenient, clutters your main chat history, and forces you to share a phone number.
 
-## How it works (high level)
+I kept running into these friction points:
 
-1. Sign in with Clerk using your Google account.
-2. Unlock once on a device with your password to derive encryption keys (the password never leaves your device).
-3. Messages are encrypted locally and delivered via the realtime service; files are uploaded to your Google Drive under `DriveChat/`.
-4. Other devices with the same signed-in account and unlock password receive and decrypt the messages.
+- Cross-Device Chaos  
+  Moving a file from phone to laptop shouldn’t require uploading it to a third-party server or scrolling through a chat thread.
 
-5. Configure envs: copy `backend/.env.example` and `frontend/.env.example`, then add Clerk, Firebase, and Google OAuth keys.
-6. Run locally:
-   ```powershell
-   npm run start
-   ```
-7. Open `http://localhost:5173`, sign in with Clerk (Google), and follow the on-screen unlock flow.
+- The “Me” Chat Problem  
+  Messaging apps aren’t designed for personal data persistence or long-term organization.
 
-## Important security notes
+- True Privacy  
+  I don’t want AI indexing my personal notes or files, and I don’t want my data tied to a phone number.
 
-- **Password recovery isn’t possible**: If you lose your password, existing messages remain encrypted and cannot be recovered. If needed, delete your DriveChat account and sign in again to start fresh—your Google Drive files remain intact.
-- **We never hold your unencrypted data**: DriveChat does not have access to your unlocked messages or passwords.
-- **Files remain under your control**: All attachments are stored in your Google Drive; you can manage or remove them directly from Drive.
+DriveChat fixes this by treating your Google Drive as the authoritative file store and using Firestore for real-time sync. The server never sees your files—they’re encrypted and uploaded directly from your device to your Drive.
 
-## Tech stack
+---
 
-- **Frontend**: React 19 + React Router 7, Vite, Tailwind CSS 4, Clerk, Axios, Socket.IO client, Dexie (offline cache), Zod + React Hook Form, Radix Dialog, Lucide icons.
-- **Realtime & state**: Socket.IO with Redis Streams, ACK + `lastSeenId` watermarking, Dexie + localStorage persistence.
-- **Backend**: Node.js + Express 5, Firebase Admin SDK (Firestore), Clerk SDK; Google Drive uploads/conversions handled client-side; BullMQ + Redis for auto-delete/cleanup scheduling.
-- **Tooling**: ESLint (flat), Prettier, Husky + lint-staged, Commitlint, npm scripts.
+## ✨ Key Features
 
-## Contributing
+### 🔐 True End-to-End Encryption (E2EE)
 
-- Use conventional commits.
-- Lint/format before PRs.
-- See `Docs/` for architecture and realtime notes.
+Unlike apps that encrypt messages but still store your files, DriveChat encrypts everything.  
+Only encrypted metadata is stored. We know a file exists, but not what it is.
+
+### 🧭 Device Orchestration
+
+See exactly which device (Laptop, Phone, Tablet) sent each message, making it easy to organize your workflow.
+
+### ☁️ Your Files, Your Drive
+
+Files are uploaded directly to your personal Google Drive (DriveChat/ folder).  
+You retain full ownership at all times.
+
+### ⚡ Real-Time Sync
+
+Built with Socket.IO and Redis Streams.  
+Send from one device and it appears instantly on all others.
+
+### 🕒 Ephemeral by Default
+
+Messages auto-delete after 24 hours.  
+Star important content to keep it forever—let the rest fade away.
+
+---
+
+## 🏗️ How It Works
+
+The architecture is designed to keep the server out of the way as much as possible.
+
+### 🔑 Authentication
+
+- Sign in via Clerk (Google OAuth)
+- No phone numbers required
+
+### 🔐 Encryption Model
+
+- You enter a passphrase on each device
+- A Master Encryption Key (MEK) is derived locally using scrypt
+- The MEK never leaves your device
+
+⚠️ The Math Doesn’t Lie  
+If you enter the wrong passphrase, decryption fails.  
+If you lose your passphrase, your messages are gone forever.  
+To reset, you must delete your account and recreate it.  
+Your files remain safe in Drive, but old messages become inaccessible.
+
+### 💬 Messaging Flow
+
+You type a message → frontend encrypts it → backend receives ciphertext → Firestore stores encrypted data → realtime layer pushes ciphertext → other devices decrypt locally using their MEK.
+
+### 📁 File Flow
+
+You upload a file → frontend encrypts file metadata → frontend uploads directly to Google Drive → backend stores only the encrypted file ID.
+
+---
+
+## 🚀 Quick Start
+
+The recommended way to run DriveChat is locally using Node.js and a Redis container.
+
+1. Clone the repository  
+   git clone https://github.com/your-username/drivechat.git  
+   cd drivechat
+
+2. Configure environment variables  
+   cp backend/.env.example backend/.env  
+   cp frontend/.env.example frontend/.env
+
+3. Start Redis  
+   docker run -d -p 6379:6379 redis:7-alpine
+
+4. Install dependencies  
+   npm install in frontend/backend
+
+5. Run the application  
+   npm start
+
+Visit http://localhost:5173 to get started.
+
+Note:  
+If you prefer a fully containerized setup using Docker Compose, refer to Docs/docker-commands.txt.
+
+---
+
+## 🛠️ Tech Stack
+
+### Frontend
+
+- React 19 + Vite – Fast, modern UI development
+- Tailwind CSS – Utility-first styling
+- Dexie – IndexedDB caching for offline support
+- Socket.IO Client – Real-time connections
+- Web Crypto API – Native browser encryption
+
+### Backend
+
+- Node.js + Express 5 – Minimal API surface
+- Socket.IO Server – Rooms and event management
+- Redis Streams – Durable event replay for offline devices
+- BullMQ – Scheduled cleanup and deletion jobs
+- Firestore – Canonical encrypted metadata store
+
+---
+
+## 📂 Project Structure
+
+drivechat/  
+├── backend/ Express API, Socket.IO server, queue workers  
+│ ├── src/  
+│ │ ├── realtime/ Socket.IO logic and stream publishers  
+│ │ ├── queues/ BullMQ cleanup jobs  
+│ │ └── controllers/  
+├── frontend/ React application
+
+---
+
+## 🤝 Contributing
+
+This started as a personal tool, but contributions are welcome—especially around security, privacy, and user experience.
+
+- Fork the repository
+- Create your feature branch
+- Commit using Conventional Commits
+- Push your branch
+- Open a Pull Request
+
+---

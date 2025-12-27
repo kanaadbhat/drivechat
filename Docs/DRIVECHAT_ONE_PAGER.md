@@ -192,6 +192,7 @@ Modern users own multiple devices (laptop, phone, tablet) but moving content bet
 - **Real-Time Push**: Socket.IO (rooms per user; Redis adapter for scale)
 - **Async Work**: BullMQ + Redis (auto-delete, cleanup, file ops, future AI)
 - **Media Access**: Backend proxy streams authenticated bytes from Drive
+- **Warmup Gate**: Frontend shows a DriveChat-branded loading screen and polls `/health` with Fibonacci backoff before routing users into the app
 
 ---
 
@@ -275,11 +276,9 @@ Modern users own multiple devices (laptop, phone, tablet) but moving content bet
 
 #### Routes
 
-- `/api/auth`: Google OAuth flow (url, callback, tokens, refresh)
-- `/api/messages`: CRUD, search, category filters
-- `/api/files`: Upload, download, preview, streaming proxy
-- `/api/users`: Profile, devices, analytics
-- `/api/admin`: Cleanup triggers, queue stats
+- `/api/messages`: all message CRUD plus helpers for pending Drive deletions, category filters, bulk delete/unstar, drive executor ack, and single-message updates and deletes
+- `/api/users`: profile (view/update/delete), device CRUD, device list/analytics, and device registration
+- `/health`: lightweight health endpoint used by the warmup gate and monitoring checks
 
 #### Controllers
 
@@ -334,7 +333,7 @@ Modern users own multiple devices (laptop, phone, tablet) but moving content bet
 
 - Enables multi-instance Socket.IO
 - Shares pub/sub across backend nodes
-- Configured via `REDIS_HOST` and `REDIS_PORT`
+- Configured via `REDIS_URL` (single connection string)
 
 ### 5. Queue System (BullMQ)
 
@@ -509,58 +508,40 @@ Client-Side:
 
 ## API Overview
 
-### Authentication Endpoints
+### Health Endpoint
 
-| Method | Endpoint                    | Description              | Auth |
-| ------ | --------------------------- | ------------------------ | ---- |
-| GET    | `/api/auth/google/url`      | Get OAuth URL            | ✅   |
-| GET    | `/api/auth/google/callback` | OAuth callback           | ❌   |
-| POST   | `/api/auth/google/tokens`   | Exchange code for tokens | ✅   |
-| POST   | `/api/auth/google/refresh`  | Refresh access token     | ✅   |
+- `GET /health` – simple probe returning status/timestamp; used by the frontend warmup gate and monitors.
 
-### Message Endpoints
+### Messages API
 
-| Method | Endpoint                      | Description        | Auth |
-| ------ | ----------------------------- | ------------------ | ---- |
-| GET    | `/api/messages`               | Get all messages   | ✅   |
-| GET    | `/api/messages/search?q=`     | Search messages    | ✅   |
-| GET    | `/api/messages/category/:cat` | Filter by category | ✅   |
-| GET    | `/api/messages/:id`           | Get single message | ✅   |
-| POST   | `/api/messages`               | Create message     | ✅   |
-| PATCH  | `/api/messages/:id`           | Update (star/edit) | ✅   |
-| DELETE | `/api/messages/:id`           | Delete message     | ✅   |
+| Method | Endpoint                              | Description                                 | Auth |
+| ------ | ------------------------------------- | ------------------------------------------- | ---- |
+| GET    | `/api/messages`                       | List all messages (with pagination/filter)  | ✅   |
+| GET    | `/api/messages/pending-deletions`     | Devices reconciling pending Drive deletions | ✅   |
+| POST   | `/api/messages/pending-deletions/ack` | Acknowledge pending deletion work           | ✅   |
+| GET    | `/api/messages/category/:category`    | Filter by category                          | ✅   |
+| DELETE | `/api/messages/all`                   | Delete everything (admin-like)              | ✅   |
+| PATCH  | `/api/messages/unstar-all`            | Remove star from every message              | ✅   |
+| GET    | `/api/messages/:id`                   | Fetch a single message                      | ✅   |
+| POST   | `/api/messages`                       | Create a new message                        | ✅   |
+| PATCH  | `/api/messages/:id`                   | Update (star/unstar, edit, metadata)        | ✅   |
+| POST   | `/api/messages/:id/drive-ack`         | Ack Drive executor progress for a message   | ✅   |
+| DELETE | `/api/messages/:id`                   | Delete a specific message                   | ✅   |
 
-### File Endpoints
+### Users API
 
-| Method | Endpoint                     | Description       | Auth |
-| ------ | ---------------------------- | ----------------- | ---- |
-| POST   | `/api/files/upload`          | Upload to Drive   | ✅   |
-| GET    | `/api/files/:fileId`         | Get metadata      | ✅   |
-| GET    | `/api/files/:fileId/preview` | Get preview URL   | ✅   |
-| GET    | `/api/files/:fileId/content` | Stream file bytes | ✅   |
-| DELETE | `/api/files/:fileId`         | Delete from Drive | ✅   |
+| Method | Endpoint                       | Description                                 | Auth |
+| ------ | ------------------------------ | ------------------------------------------- | ---- |
+| GET    | `/api/users/me`                | Fetch current profile                       | ✅   |
+| PATCH  | `/api/users/me`                | Update profile metadata                     | ✅   |
+| DELETE | `/api/users/me`                | Delete the user account                     | ✅   |
+| GET    | `/api/users/devices`           | List registered devices                     | ✅   |
+| POST   | `/api/users/devices`           | Register a new device                       | ✅   |
+| PATCH  | `/api/users/devices/:deviceId` | Rename/update a device                      | ✅   |
+| DELETE | `/api/users/devices/:deviceId` | Remove a device from the account            | ✅   |
+| GET    | `/api/users/analytics`         | Fetch usage analytics (message counts, etc) | ✅   |
 
-### User Endpoints
-
-| Method | Endpoint                 | Description     | Auth |
-| ------ | ------------------------ | --------------- | ---- |
-| GET    | `/api/users/me`          | Get profile     | ✅   |
-| PATCH  | `/api/users/me`          | Update profile  | ✅   |
-| GET    | `/api/users/devices`     | List devices    | ✅   |
-| POST   | `/api/users/devices`     | Register device | ✅   |
-| PATCH  | `/api/users/devices/:id` | Update device   | ✅   |
-| DELETE | `/api/users/devices/:id` | Delete device   | ✅   |
-| GET    | `/api/users/analytics`   | Get stats       | ✅   |
-
-### Admin Endpoints
-
-| Method | Endpoint                   | Description      | Auth |
-| ------ | -------------------------- | ---------------- | ---- |
-| POST   | `/api/admin/cleanup`       | Trigger cleanup  | ✅   |
-| GET    | `/api/admin/cleanup/stats` | Queue statistics | ✅   |
-| GET    | `/api/admin/stats`         | System stats     | ✅   |
-
-All ✅ endpoints require: `Authorization: Bearer <clerk-jwt>`
+All listed endpoints require a valid Clerk JWT in `Authorization: Bearer <token>` unless noted otherwise.
 
 ---
 
@@ -660,7 +641,8 @@ const useSocket = () => {
 const { createAdapter } = require('@socket.io/redis-adapter');
 const { createClient } = require('redis');
 
-const pubClient = createClient({ host: 'localhost', port: 6379 });
+const redisUrl = process.env.REDIS_URL; // e.g., redis://localhost:6379
+const pubClient = createClient({ url: redisUrl });
 const subClient = pubClient.duplicate();
 
 io.adapter(createAdapter(pubClient, subClient));
@@ -690,7 +672,7 @@ const { Queue, Worker } = require('bullmq');
 const { deleteMessage } = require('../services/cleanupService');
 
 const cleanupQueue = new Queue('cleanup', {
-  connection: { host: 'localhost', port: 6379 },
+  connection: { url: process.env.REDIS_URL },
 });
 
 const cleanupWorker = new Worker(
@@ -700,7 +682,7 @@ const cleanupWorker = new Worker(
     await deleteMessage(messageId, userId);
   },
   {
-    connection: { host: 'localhost', port: 6379 },
+    connection: { url: process.env.REDIS_URL },
   }
 );
 
@@ -800,8 +782,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=5000
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - REDIS_URL=redis://redis:6379
       - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
       - FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}
       - FIREBASE_PRIVATE_KEY=${FIREBASE_PRIVATE_KEY}
@@ -894,8 +875,9 @@ FIREBASE_CLIENT_EMAIL=...
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 GOOGLE_OAUTH_REDIRECT_URI=http://localhost:5000/api/auth/google/callback
-REDIS_HOST=localhost
-REDIS_PORT=6379
+REDIS_URL=redis://localhost:6379
+HEALTH_PING_INTERVAL_SECONDS=600
+HEALTH_PING_URL=http://localhost:5000/health
 NODE_ENV=development
 PORT=5000
 LOG_LEVEL=debug
@@ -1229,15 +1211,15 @@ const decryptedFile = await decrypt(encryptedFile, myPrivateKey);
 - [x] Auto-delete scheduling
 - [x] Device management
 
-### 🚧 Phase 2: Real-Time (In Progress)
+### ✅ Phase 2: Real-Time
 
-- [ ] Socket.IO server setup
-- [ ] Authenticate sockets with Clerk JWT
-- [ ] Per-user room isolation
-- [ ] Emit events from message controllers
-- [ ] Frontend socket client and listeners
-- [ ] Remove/reduce polling
-- [ ] Test multi-device sync
+- [x] Socket.IO server setup
+- [x] Authenticate sockets with Clerk JWT
+- [x] Per-user room isolation
+- [x] Emit events from message controllers
+- [x] Frontend socket client and listeners
+- [x] Remove/reduce polling (health gate + sockets)
+- [x] Test multi-device sync
 
 ### 📋 Phase 3: Production Ready
 
@@ -1287,6 +1269,7 @@ const decryptedFile = await decrypt(encryptedFile, myPrivateKey);
 ```bash
 # Terminal 1: Start Redis
 docker run -d -p 6379:6379 redis
+set REDIS_URL=redis://localhost:6379
 
 # Terminal 2: Start Backend
 cd backend
@@ -1318,7 +1301,7 @@ docker-compose down
 - Frontend: http://localhost:5173
 - Backend: http://localhost:5000
 - Health Check: http://localhost:5000/health
-- Redis: localhost:6379
+- Redis: redis://localhost:6379
 
 ### Essential Commands
 
@@ -1370,6 +1353,6 @@ This is not just a chat app—it's a **personal, privacy-first communication lay
 
 ---
 
-**Last Updated**: November 6, 2025  
+**Last Updated**: December 27, 2025  
 **Version**: 1.0.0  
 **License**: MIT

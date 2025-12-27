@@ -8,52 +8,55 @@ import SettingsPage from './components/SettingsPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import PreChat from './components/PreChat';
 import LearnMore from './components/LearnMore';
+import HealthGate from './components/HealthGate';
 
 const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 function App() {
   return (
     <ClerkProvider publishableKey={clerkPubKey}>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/signin" element={<SignInPage />} />
-          <Route path="/learn-more" element={<LearnMore />} />
-          <Route
-            path="/prechat"
-            element={
-              <ProtectedRoute>
-                <PreChat />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/chat"
-            element={
-              <ProtectedRoute>
-                <ChatInterface />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/starred"
-            element={
-              <ProtectedRoute>
-                <StarredMessages />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <ProtectedRoute>
-                <SettingsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </BrowserRouter>
+      <HealthGate>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/signin" element={<SignInPage />} />
+            <Route path="/learn-more" element={<LearnMore />} />
+            <Route
+              path="/prechat"
+              element={
+                <ProtectedRoute>
+                  <PreChat />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/chat"
+              element={
+                <ProtectedRoute>
+                  <ChatInterface />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/starred"
+              element={
+                <ProtectedRoute>
+                  <StarredMessages />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <ProtectedRoute>
+                  <SettingsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </BrowserRouter>
+      </HealthGate>
     </ClerkProvider>
   );
 }

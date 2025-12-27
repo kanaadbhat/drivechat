@@ -23,6 +23,28 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const server = http.createServer(app);
 
+// Periodic self-health ping to keep the server warm/visible to hosting
+const HEALTH_PING_INTERVAL_SECONDS = Number(process.env.HEALTH_PING_INTERVAL_SECONDS) || 600;
+const HEALTH_PING_URL = process.env.HEALTH_PING_URL || `http://localhost:${PORT}/health`;
+
+const startHealthPing = () => {
+  const ping = async () => {
+    try {
+      const response = await fetch(HEALTH_PING_URL);
+      if (!response.ok) {
+        console.warn(`Health ping received non-200: ${response.status}`);
+      }
+    } catch (error) {
+      console.warn('Health ping failed:', error.message);
+    } finally {
+      const delayMs = Math.max(1000, HEALTH_PING_INTERVAL_SECONDS * 1000);
+      setTimeout(ping, delayMs);
+    }
+  };
+
+  ping();
+};
+
 // Middleware
 app.use(
   cors({
@@ -72,6 +94,11 @@ server.listen(PORT, async () => {
     String(process.env.SKIP_PERIODIC_CLEANUP || 'false')
   );
   console.log('CONFIG REALTIME_STREAM_MAXLEN=', process.env.REALTIME_STREAM_MAXLEN || '10000');
+
+  console.log(
+    `🩺 Health ping enabled: every ${HEALTH_PING_INTERVAL_SECONDS} sec -> ${HEALTH_PING_URL}`
+  );
+  startHealthPing();
 
   // Initialize realtime (Socket.IO + Redis Streams)
   try {

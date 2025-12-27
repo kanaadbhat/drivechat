@@ -150,17 +150,17 @@ export default function LandingPage() {
           <div className="w-full max-w-7xl mx-auto px-4 relative z-10">
             <div className="max-w-4xl mx-auto text-center">
               <div className="inline-block px-4 py-2 bg-white/5 border border-white/10 rounded-full text-white text-sm font-semibold mb-6">
-                ✨ Your Private Cross-Device Workspace
+                ✨ The “Me” chat, re-engineered
               </div>
               <h1
                 className="relative z-10 transform-gpu text-5xl md:text-6xl font-display font-bold leading-tight pb-4 mb-8 bg-linear-to-r from-[#1a73e8] via-[#f9ab00] to-[#ea4335] bg-clip-text text-transparent drop-shadow-[0_10px_30px_rgba(26,115,232,0.25)]"
                 style={{ transform: 'translateZ(0)' }}
               >
-                Sync with Yourself, Securely
+                Sync with Yourself.Securely.
               </h1>
               <p className="text-xl text-gray-400 mb-8 max-w-2xl mx-auto">
-                A private chat-like space to share messages and files across your own devices. No
-                phone number required—just your Google account and your own encryption keys.
+                A private, encrypted space to move messages and files across your devices. Stored in
+                your Google Drive. Locked with your own keys.
               </p>
               <div className="flex gap-4 justify-center flex-wrap">
                 {isSignedIn ? (
@@ -266,6 +266,11 @@ export default function LandingPage() {
             <p className="mt-2 text-sm text-gray-300">
               Made with <span className="text-rose-400">❤️</span> by{' '}
               <span className="font-display font-semibold">Kanaad Bhat</span>
+            </p>
+            <p className="mt-2 text-sm">
+              <a href="mailto:kanaad@kanaad.in" className="text-blue-400 hover:underline">
+                Contact: kanaad@kanaad.in
+              </a>
             </p>
           </div>
         </div>

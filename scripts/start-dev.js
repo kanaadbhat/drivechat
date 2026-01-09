@@ -1,55 +1,35 @@
 #!/usr/bin/env node
 import { execSync } from 'child_process';
 
-function run(cmd) {
-  try {
-    return execSync(cmd, { stdio: 'pipe', encoding: 'utf8' }).trim();
-  } catch {
-    return '';
-  }
-}
+const sh = (cmd, inherit = false) =>
+  execSync(cmd, {
+    stdio: inherit ? 'inherit' : 'pipe',
+    encoding: 'utf8',
+    shell: true,
+  }).trim();
 
-function runInherit(cmd) {
-  try {
-    execSync(cmd, { stdio: 'inherit', shell: true });
-    return true;
-  } catch {
-    console.error('Command failed:', cmd);
-    return false;
-  }
-}
+console.log('🔍 Checking Redis (drivechat-redis-test)...');
 
-console.log('Checking Redis container (drivechat-redis-test)...');
-
-let includeRedisInConcurrently = false;
-const running = run(
-  'docker ps --filter "name=drivechat-redis-test" --filter "status=running" --format "{{.Names}}"'
+const isRunning = sh(
+  'docker ps --filter "name=^/drivechat-redis-test$" --filter "status=running" --format "{{.Names}}"'
 );
-if (running) {
-  console.log('Redis container is already running:', running);
-  includeRedisInConcurrently = false;
+
+if (isRunning) {
+  console.log('✅ Redis already running');
 } else {
-  const exists = run(
-    'docker ps -a --filter "name=drivechat-redis-test" --format "{{.Names}}\t{{.Status}}"'
-  );
+  const exists = sh('docker ps -a --filter "name=^/drivechat-redis-test$" --format "{{.Names}}"');
+
   if (exists) {
-    console.log('Found existing container (not running). Starting it...');
-    if (!runInherit('docker start drivechat-redis-test')) process.exit(1);
-    includeRedisInConcurrently = false;
+    console.log('▶️ Starting existing Redis container...');
+    sh('docker start drivechat-redis-test', true);
   } else {
-    console.log('No existing container found. Creating/starting via docker-compose...');
-    if (!runInherit('docker-compose up -d redis')) process.exit(1);
-    includeRedisInConcurrently = true;
+    console.log('🆕 Creating Redis container...');
+    sh('docker compose up -d redis', true);
   }
 }
 
-console.log('Starting dev processes via concurrently...');
-let startCmd;
-if (includeRedisInConcurrently) {
-  startCmd =
-    'npx concurrently -k -n backend,frontend,redis -c blue,green,yellow "npm run dev:backend" "npm run dev:frontend" "npm run docker:up:redis"';
-} else {
-  startCmd =
-    'npx concurrently -k -n backend,frontend -c blue,green "npm run dev:backend" "npm run dev:frontend"';
-}
-if (!runInherit(startCmd)) process.exit(1);
+console.log('🚀 Starting dev processes...');
+sh(
+  'npx concurrently -k -n backend,frontend -c blue,green "npm run dev:backend" "npm run dev:frontend"',
+  true
+);

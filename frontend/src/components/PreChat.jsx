@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth, useUser } from '@clerk/clerk-react';
 import axios from 'axios';
 import { Eye, EyeOff } from 'lucide-react';
@@ -20,12 +20,17 @@ import {
 } from '../utils/crypto';
 import { ensurePersistedLastSeenId, setPersistedLastSeenId } from '../utils/lastSeenManager';
 import { upsertMessage, deleteMessage, clearMessages } from '../db/dexie';
+import {
+  getCurrentDevice,
+  initializeDevice,
+  clearCurrentDevice,
+  saveCurrentDevice,
+} from '../utils/deviceManager';
 
 const API_URL =
   import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 const PRECHAT_KEY_BASE = 'drivechat_prechat_passed';
 const buildPrechatKey = (userId) => `${PRECHAT_KEY_BASE}_${userId || 'anon'}`;
-const DB_OWNER_KEY = 'ownerUserId';
 
 export default function PreChat() {
   const navigate = useNavigate();
@@ -41,8 +46,10 @@ export default function PreChat() {
   const [status, setStatus] = useState('checking');
   const [error, setError] = useState('');
   const [pendingCount, setPendingCount] = useState(null);
-  const pendingCountRef = useRef(0);
   const runRef = useRef(false);
+  const awaitingDeviceRef = useRef(false);
+
+  const [deviceCandidates, setDeviceCandidates] = useState([]);
 
   const [encryptionSalt, setEncryptionSalt] = useState(null);
   const [password, setPassword] = useState('');
@@ -236,6 +243,62 @@ export default function PreChat() {
     [decryptMessagePayload, getToken, userId]
   );
 
+  /* ================= DEVICE BINDING ================= */
+
+  const ensureDeviceBinding = useCallback(async () => {
+    const token = await getToken();
+    if (!token) return initializeDevice();
+
+    let devices = [];
+    try {
+      const res = await axios.get(`${API_URL}/api/users/devices`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      devices = res.data?.devices || res.data || [];
+      console.log('[PreChat][device-binding] fetched devices from API', {
+        count: devices.length,
+        payload: res.data,
+      });
+    } catch (err) {
+      console.warn(
+        '[PreChat][device-binding] failed to fetch /api/users/devices, falling back to guest',
+        err?.response?.status || err?.message || err
+      );
+      // Without server list, keep local if present; else guest
+      const existing = getCurrentDevice();
+      return existing || initializeDevice();
+    }
+
+    // If local device exists, only keep it if server knows it; otherwise clear it
+    const existing = getCurrentDevice();
+    if (existing) {
+      const serverMatch = devices.find((d) => d.deviceId === existing.deviceId);
+      if (serverMatch) {
+        console.log('[PreChat][device-binding] local device known to server', serverMatch.deviceId);
+        const merged = { ...serverMatch };
+        saveCurrentDevice(merged);
+        return merged;
+      }
+      console.log('[PreChat][device-binding] local device not registered on server, clearing');
+      clearCurrentDevice();
+    }
+
+    // No local key: ask user to pick from registered devices, or continue as guest
+    if (devices.length >= 1) {
+      console.log('[PreChat][device-binding] prompting user to pick device', {
+        deviceCount: devices.length,
+      });
+      awaitingDeviceRef.current = true;
+      setDeviceCandidates(devices);
+      setStatus('selecting-device');
+      return null; // pause flow for user choice
+    }
+
+    // No server devices: keep guest local device
+    console.log('[PreChat][device-binding] no server devices, initializing guest');
+    return initializeDevice();
+  }, [getToken]);
+
   /* ================= MAIN ORCHESTRATOR ================= */
 
   const runPreChat = useCallback(async () => {
@@ -244,6 +307,10 @@ export default function PreChat() {
       return;
     }
     if (!userId || !isSignedIn) return;
+    if (awaitingDeviceRef.current) {
+      console.log('[PreChat] Waiting for device selection — flow paused');
+      return;
+    }
 
     // Double-check localStorage (effect handles this too, but be safe)
     const prechatKey = buildPrechatKey(userId);
@@ -270,6 +337,9 @@ export default function PreChat() {
 
       await syncMessagesWithBackend(keyResult.mek);
 
+      const boundDevice = await ensureDeviceBinding();
+      if (!boundDevice) return; // waiting for user to pick device
+
       localStorage.setItem(buildPrechatKey(userId), String(Date.now()));
       console.log('[PreChat][STEP 5 ✓] PreChat completed');
 
@@ -284,6 +354,7 @@ export default function PreChat() {
   }, [
     ensureDriveAccess,
     ensureKey,
+    ensureDeviceBinding,
     isSignedIn,
     syncMessagesWithBackend,
     syncPendingDeletions,
@@ -291,10 +362,6 @@ export default function PreChat() {
   ]);
 
   /* ================= EFFECTS ================= */
-
-  useEffect(() => {
-    pendingCountRef.current = pendingCount ?? 0;
-  }, [pendingCount]);
 
   // Single-run effect: only triggers when status is "checking"
   const hasStartedRef = useRef(false);
@@ -351,20 +418,40 @@ export default function PreChat() {
     setStatus('checking');
   };
 
+  const handleSelectDevice = (device) => {
+    awaitingDeviceRef.current = false;
+    console.log('[PreChat][device-binding] user selected registered device', device?.deviceId);
+    saveCurrentDevice(device);
+    localStorage.setItem(buildPrechatKey(userId), String(Date.now()));
+    runRef.current = false;
+    setStatus('success');
+  };
+
+  const handleUseGuest = () => {
+    awaitingDeviceRef.current = false;
+    console.log('[PreChat][device-binding] user opted to continue as guest');
+    initializeDevice();
+    localStorage.setItem(buildPrechatKey(userId), String(Date.now()));
+    runRef.current = false;
+    setStatus('success');
+  };
+
   const subtitle =
     status === 'awaiting-key'
       ? isFirstSetup
         ? 'First-time setup: choose an encryption password you will use on every login. We cannot recover it.'
         : 'Enter your encryption password to unlock your data on this device.'
-      : status === 'checking'
-        ? 'Preparing secure chat session.'
-        : status === 'consenting'
-          ? 'Requesting Google Drive access.'
-          : status === 'deleting'
-            ? `Cleaning up pending deletions${pendingCount ? ` (${pendingCount})` : ''}.`
-            : status === 'syncing'
-              ? 'Syncing and decrypting your messages.'
-              : error || '';
+      : status === 'selecting-device'
+        ? 'We found multiple registered devices that could match. Pick which one you are on.'
+        : status === 'checking'
+          ? 'Preparing secure chat session.'
+          : status === 'consenting'
+            ? 'Requesting Google Drive access.'
+            : status === 'deleting'
+              ? `Cleaning up pending deletions${pendingCount ? ` (${pendingCount})` : ''}.`
+              : status === 'syncing'
+                ? 'Syncing and decrypting your messages.'
+                : error || '';
 
   const retry = () => {
     console.log('[PreChat] Manual retry triggered');
@@ -420,6 +507,47 @@ export default function PreChat() {
             <li>✅ Step 5: Finalizing secure session</li>
           </ul>
         </div>
+
+        {status === 'selecting-device' && (
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-3 text-left">
+            <p className="text-white font-semibold text-sm">Pick your device</p>
+            <p className="text-xs text-gray-400">
+              We found multiple registered devices that look similar. Select the one you are using
+              now.
+            </p>
+            <div className="space-y-2">
+              {deviceCandidates.map((device) => (
+                <div
+                  key={device.deviceId}
+                  className="flex items-center justify-between bg-gray-800/60 border border-gray-700 rounded-lg p-3"
+                >
+                  <div className="text-sm text-gray-200">
+                    <p className="font-semibold text-white">{device.name || 'Unnamed device'}</p>
+                    <p className="text-xs text-gray-400">
+                      {device.type || 'unknown'} • Last seen: {device.lastSeen || 'unknown'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectDevice(device)}
+                    className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg"
+                  >
+                    Use this device
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={handleUseGuest}
+                className="px-3 py-2 bg-gray-800 border border-gray-700 text-gray-200 rounded-lg text-sm"
+              >
+                Continue as guest
+              </button>
+            </div>
+          </div>
+        )}
 
         {status === 'awaiting-key' && (
           <form

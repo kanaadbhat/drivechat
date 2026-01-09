@@ -17,6 +17,55 @@ export const DEVICE_TYPES = {
   GUEST: 'guest',
 };
 
+const getBrowserName = () => {
+  const ua = (navigator.userAgent || '').toLowerCase();
+
+  // Edge (Chromium-based) - contains 'edg'
+  if (ua.includes('edg/')) return 'Edge';
+  if (ua.includes('edga') || ua.includes('edgios')) return 'Edge';
+
+  // Opera
+  if (ua.includes('opr/') || ua.includes('opera')) return 'Opera';
+
+  // Vivaldi
+  if (ua.includes('vivaldi')) return 'Vivaldi';
+
+  // Brave (UA may include 'brave')
+  if (ua.includes('brave')) return 'Brave';
+
+  // Samsung Internet
+  if (ua.includes('samsungbrowser')) return 'Samsung Internet';
+
+  // UC Browser
+  if (ua.includes('ucbrowser')) return 'UC Browser';
+
+  // QQ / Baidu / Maxthon / Yandex / Puffin
+  if (ua.includes('qqbrowser')) return 'QQ Browser';
+  if (ua.includes('baidubrowser') || ua.includes('baiduboxapp')) return 'Baidu Browser';
+  if (ua.includes('maxthon')) return 'Maxthon';
+  if (ua.includes('yabrowser') || ua.includes('yandex')) return 'Yandex';
+  if (ua.includes('puffin')) return 'Puffin';
+
+  // Chromium variants and Chrome (iOS uses CriOS)
+  if (ua.includes('crios')) return 'Chrome (iOS)';
+  if (ua.includes('chromium')) return 'Chromium';
+  if (ua.includes('chrome')) return 'Chrome';
+
+  // Firefox (iOS uses FxiOS)
+  if (ua.includes('fxios') || ua.includes('firefox')) return 'Firefox';
+
+  // Safari (must come after Chrome checks because Chrome UA contains 'safari')
+  if (ua.includes('safari')) return 'Safari';
+
+  // Electron apps
+  if (ua.includes('electron')) return 'Electron';
+
+  // Tor Browser (best-effort)
+  if (ua.includes('torbrowser') || ua.includes('tor/')) return 'Tor Browser';
+
+  return 'Browser';
+};
+
 /**
  * Get icon for device type
  */
@@ -68,14 +117,7 @@ export const detectDeviceType = () => {
  * Generate a default device name based on type
  */
 export const generateDefaultDeviceName = (type) => {
-  const browser = (() => {
-    const ua = navigator.userAgent;
-    if (ua.includes('Chrome')) return 'Chrome';
-    if (ua.includes('Firefox')) return 'Firefox';
-    if (ua.includes('Safari')) return 'Safari';
-    if (ua.includes('Edge')) return 'Edge';
-    return 'Browser';
-  })();
+  const browser = getBrowserName();
 
   const typeNames = {
     [DEVICE_TYPES.MOBILE]: 'Mobile',

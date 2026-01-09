@@ -78,6 +78,8 @@ export default function ChatInterface() {
   const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
   const messagesEndRef = useRef(null);
   const realtimeRef = useRef(null);
+  const messagesContainerRef = useRef(null);
+  const shouldAutoScrollRef = useRef(true);
 
   useUserChangeGuard(user?.id);
 
@@ -174,7 +176,6 @@ export default function ChatInterface() {
     setDriveAuthorized(authorized);
   }, []);
 
-  // Helper functions - defined before useEffect hooks that use them
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
   };
@@ -463,8 +464,10 @@ export default function ChatInterface() {
   }, []);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
+    if (shouldAutoScrollRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }
+  }, [messages.length]);
 
   const sendMessage = async () => {
     if (!inputMessage.trim() && !selectedFile) return;
@@ -1024,6 +1027,16 @@ export default function ChatInterface() {
 
         {/* Messages Area */}
         <div
+          ref={messagesContainerRef}
+          onScroll={() => {
+            const el = messagesContainerRef.current;
+            if (!el) return;
+
+            const threshold = 80; // px from bottom
+            const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+
+            shouldAutoScrollRef.current = atBottom;
+          }}
           className="flex-1 overflow-y-auto p-4 space-y-4"
           style={{
             backgroundImage: "url('/minimalist-bg.jpg')",

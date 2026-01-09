@@ -1,5 +1,4 @@
 import { clearAllUserData, deleteDb, db } from '../db/dexie';
-import { clearCurrentDevice } from './deviceManager';
 import { clearCachedMek, clearCachedSalt } from './crypto';
 import { revokeToken, clearStoredToken } from './gisClient';
 import {
@@ -15,6 +14,7 @@ function clearDrivechatLocalStorage() {
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const key = localStorage.key(i);
       if (key && key.startsWith(CLEANUP_KEY_PREFIX)) {
+        if (key === 'drivechat_device') continue;
         localStorage.removeItem(key);
       }
     }
@@ -66,7 +66,6 @@ export async function cleanupUserSession(userId, options = {}) {
   }
 
   clearDrivechatLocalStorage();
-  clearCurrentDevice();
   clearSessionStorageSilently();
 
   try {

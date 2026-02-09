@@ -1,0 +1,73 @@
+name: Deploy React Vite App to S3 and CloudFront (Dev)
+
+on:
+  push:
+    branches:
+      - dev-deploy
+
+concurrency:
+  group: deploy-dev-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Install Dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Set Development Environment Variables
+        run: |
+          cat <<'EOF' > frontend/.env
+          # Frontend Environment Variables
+          VITE_CLERK_PUBLISHABLE_KEY=pk_test_Z2xhZC11cmNoaW4tODguY2xlcmsuYWNjb3VudHMuZGV2JA
+          VITE_GOOGLE_CLIENT_ID=16838035641-gvm1s926cohtfgmp90a2v01eac65pdon.apps.googleusercontent.com
+          VITE_BACKEND_URL=http://localhost:3000
+          VITE_ENABLE_REALTIME=true
+          VITE_PORT=4000
+          EOF
+
+      - name: Build Project
+        working-directory: frontend
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Configure AWS Credentials (Dev)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_DEV }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_DEV }}
+          aws-region: ap-south-1
+
+      - name: Verify AWS Credentials (Debug)
+        run: |
+          echo "Checking AWS identity and config"
+          aws sts get-caller-identity || true
+          aws configure list || true
+
+      - name: Sync S3 Bucket (Dev)
+        run: |
+          aws s3 sync frontend/dist/ s3://${{ secrets.S3_BUCKET_DEV }} \
+            --delete \
+            --cache-control "max-age=31536000" \
+            --exclude "index.html"
+
+          aws s3 cp frontend/dist/index.html s3://${{ secrets.S3_BUCKET_DEV }}/index.html \
+            --cache-control "no-cache"
+
+      - name: CloudFront Invalidation (Dev)
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID_DEV }} \
+            --paths "/*"

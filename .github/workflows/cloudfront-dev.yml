@@ -27,15 +27,10 @@ jobs:
         run: npm ci
 
       - name: Set Development Environment Variables
+        env:
+          DEVELOPMENT_ENV: ${{ secrets.DEVELOPMENT_ENV }}
         run: |
-          cat <<'EOF' > frontend/.env
-          # Frontend Environment Variables
-          VITE_CLERK_PUBLISHABLE_KEY=pk_test_Z2xhZC11cmNoaW4tODguY2xlcmsuYWNjb3VudHMuZGV2JA
-          VITE_GOOGLE_CLIENT_ID=16838035641-gvm1s926cohtfgmp90a2v01eac65pdon.apps.googleusercontent.com
-          VITE_BACKEND_URL=http://localhost:3000
-          VITE_ENABLE_REALTIME=true
-          VITE_PORT=4000
-          EOF
+          echo "$DEVELOPMENT_ENV" > .env
 
       - name: Build Project
         working-directory: frontend

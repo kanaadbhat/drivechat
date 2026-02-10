@@ -27,10 +27,9 @@ jobs:
         run: npm ci
 
       - name: Set Development Environment Variables
-        env:
-          DEVELOPMENT_ENV: ${{ secrets.DEVELOPMENT_ENV }}
+        working-directory: frontend
         run: |
-          echo "$DEVELOPMENT_ENV" > .env
+          echo "${{ secrets.DEVELOPMENT_ENV }}" > .env
 
       - name: Build Project
         working-directory: frontend
